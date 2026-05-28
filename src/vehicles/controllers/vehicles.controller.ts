@@ -1,0 +1,71 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
+import { RolesGuard } from '../../guards/roles.guard';
+import { Roles } from '../../decorators/roles.decorator';
+import { Permissions } from '../../decorators/permissions.decorator';
+import { ROLES } from '../../constants';
+import { Permission } from '../../constants/permissions.constant';
+import { CurrentUser } from '../../decorators/current-user.decorator';
+import { AuthenticatedUser } from '../../types';
+import { VehiclesService } from '../services/vehicles.service';
+import { CreateVehicleDto } from '../dto/create-vehicle.dto';
+import { UpdateVehicleDto } from '../dto/update-vehicle.dto';
+import { AssignDriverDto } from '../dto/assign-driver.dto';
+
+@ApiTags('Vehicles')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('vehicles')
+export class VehiclesController {
+  constructor(private readonly vehiclesService: VehiclesService) {}
+
+  @Post()
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
+  @Permissions(Permission.VEHICLES_WRITE)
+  create(@Body() dto: CreateVehicleDto, @CurrentUser() user: AuthenticatedUser) {
+    const companyId = dto.companyId ?? user.companyId;
+    if (!companyId) {
+      throw new BadRequestException('companyId is required');
+    }
+    return this.vehiclesService.create(dto, companyId);
+  }
+
+  @Get()
+  findAll(@CurrentUser() user: AuthenticatedUser) {
+    return this.vehiclesService.findAll(user.companyId);
+  }
+
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.vehiclesService.findOne(id);
+  }
+
+  @Patch(':id')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
+  update(@Param('id') id: string, @Body() dto: UpdateVehicleDto) {
+    return this.vehiclesService.update(id, dto);
+  }
+
+  @Patch(':id/assign-driver')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
+  assignDriver(@Param('id') id: string, @Body() dto: AssignDriverDto) {
+    return this.vehiclesService.assignDriver(id, dto);
+  }
+
+  @Delete(':id')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
+  remove(@Param('id') id: string) {
+    return this.vehiclesService.remove(id);
+  }
+}
