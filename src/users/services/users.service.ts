@@ -69,6 +69,41 @@ export class UsersService {
     return count > 0;
   }
 
+  async resetSuperAdminCredentials(dto: {
+    fullName: string;
+    email: string;
+    phone: string;
+    password: string;
+    profileImage?: string;
+  }) {
+    const superAdmin = await this.userModel
+      .findOne({ role: UserRole.SUPER_ADMIN })
+      .select('+password +refreshTokenHash +passwordResetToken +passwordResetExpires');
+
+    if (!superAdmin) {
+      throw new NotFoundException('Super Admin not found');
+    }
+
+    const email = normalizeEmail(dto.email);
+    const phone = dto.phone.trim();
+    await this.assertContactUnique(email, phone, superAdmin._id.toString());
+
+    superAdmin.fullName = dto.fullName;
+    superAdmin.email = email;
+    superAdmin.phone = phone;
+    superAdmin.password = await this.passwordService.hash(dto.password);
+    superAdmin.profileImage = dto.profileImage;
+    superAdmin.status = UserStatus.ACTIVE;
+    superAdmin.isEmailVerified = true;
+    superAdmin.refreshTokenHash = undefined;
+    superAdmin.passwordResetToken = undefined;
+    superAdmin.passwordResetExpires = undefined;
+
+    await superAdmin.save();
+
+    return this.userModel.findById(superAdmin._id).select(SAFE_USER_SELECT);
+  }
+
   async create(
     dto: CreateUserDto,
     options?: { status?: UserStatus; hashPassword?: boolean },

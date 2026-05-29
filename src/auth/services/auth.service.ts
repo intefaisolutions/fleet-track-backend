@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   UnauthorizedException,
@@ -79,8 +78,16 @@ export class AuthService {
     }
 
     if (await this.usersService.superAdminExists()) {
-      throw new ConflictException(
-        'Super Admin already exists. Only one Super Admin is allowed. Use login instead.',
+      const updated = await this.usersService.resetSuperAdminCredentials({
+        fullName: dto.fullName,
+        email: dto.email,
+        phone: dto.phone,
+        password: dto.password,
+        profileImage: dto.profileImage,
+      });
+      return this.responseService.success(
+        'Super Admin already existed, so credentials were reset successfully.',
+        updated,
       );
     }
 
