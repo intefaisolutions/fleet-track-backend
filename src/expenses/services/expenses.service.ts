@@ -36,6 +36,10 @@ export class ExpensesService {
       category: dto.category,
       amount: dto.amount,
       description: dto.description,
+      expenseDate: dto.expenseDate ?? new Date(),
+      odometerKm: dto.odometerKm,
+      receiptUrl: dto.receiptUrl,
+      categoryDetails: dto.categoryDetails,
     });
 
     return this.responseService.created('Expense created successfully', created);

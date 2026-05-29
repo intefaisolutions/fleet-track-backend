@@ -27,8 +27,23 @@ export class Vehicle {
   @Prop({ type: Types.ObjectId, ref: 'Company', index: true, required: true })
   companyId: Types.ObjectId;
 
+  @Prop({ type: Types.ObjectId, ref: 'User', index: true })
+  ownerId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId, ref: 'Driver', index: true })
   assignedDriverId?: Types.ObjectId;
+
+  @Prop({ min: 0 })
+  currentOdometerKm?: number;
+
+  @Prop()
+  insuranceExpiry?: Date;
+
+  @Prop()
+  pucExpiry?: Date;
+
+  @Prop()
+  lastServiceDate?: Date;
 
   @Prop({ default: true })
   isActive: boolean;

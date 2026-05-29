@@ -16,6 +16,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SettingsModule } from './settings/settings.module';
+import { PlatformModule } from './platform/platform.module';
 import { SocketModule } from './socket/socket.module';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
@@ -40,6 +41,7 @@ import { TransformInterceptor } from './interceptors/transform.interceptor';
     AnalyticsModule,
     NotificationsModule,
     PaymentsModule,
+    PlatformModule,
     SettingsModule,
     SocketModule,
   ],

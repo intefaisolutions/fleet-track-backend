@@ -1,17 +1,36 @@
+/** SRS 4-tier roles */
 export enum UserRole {
   SUPER_ADMIN = 'SUPER_ADMIN',
   COMPANY_ADMIN = 'COMPANY_ADMIN',
-  FLEET_MANAGER = 'FLEET_MANAGER',
+  VEHICLE_OWNER = 'VEHICLE_OWNER',
   DRIVER = 'DRIVER',
+  /** @deprecated Use VEHICLE_OWNER — kept for existing records */
+  FLEET_MANAGER = 'FLEET_MANAGER',
+  /** @deprecated SRS uses 4 roles only */
   ACCOUNTANT = 'ACCOUNTANT',
 }
 
-/** User account lifecycle — matches Figma: activate, suspend, pending approval */
 export enum UserStatus {
   ACTIVE = 'ACTIVE',
   INACTIVE = 'INACTIVE',
   SUSPENDED = 'SUSPENDED',
   PENDING_APPROVAL = 'PENDING_APPROVAL',
+}
+
+export enum CompanyStatus {
+  PENDING = 'PENDING',
+  ACTIVE = 'ACTIVE',
+  SUSPENDED = 'SUSPENDED',
+  REJECTED = 'REJECTED',
+}
+
+/** SRS subscription plans */
+export enum SubscriptionPlanType {
+  FREE = 'FREE',
+  BASIC = 'BASIC',
+  STANDARD = 'STANDARD',
+  PREMIUM = 'PREMIUM',
+  ENTERPRISE = 'ENTERPRISE',
 }
 
 export enum SubscriptionStatus {
@@ -21,11 +40,24 @@ export enum SubscriptionStatus {
   TRIAL = 'TRIAL',
 }
 
-export enum CompanyStatus {
-  PENDING = 'PENDING',
+/** SRS license key lifecycle */
+export enum LicenseKeyStatus {
+  UNUSED = 'UNUSED',
   ACTIVE = 'ACTIVE',
-  SUSPENDED = 'SUSPENDED',
+  EXPIRED = 'EXPIRED',
+  REVOKED = 'REVOKED',
+  CANCELLED = 'CANCELLED',
+}
+
+export enum PaymentVerificationStatus {
+  PENDING = 'PENDING',
+  VERIFIED = 'VERIFIED',
   REJECTED = 'REJECTED',
+}
+
+export enum BillingPeriod {
+  MONTHLY = 'MONTHLY',
+  YEARLY = 'YEARLY',
 }
 
 export enum VehicleType {
@@ -50,18 +82,15 @@ export enum DriverStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
+/** SRS 7 expense categories */
 export enum ExpenseCategory {
   FUEL = 'FUEL',
-  MAINTENANCE = 'MAINTENANCE',
+  SERVICE = 'SERVICE',
   INSURANCE = 'INSURANCE',
+  PUC = 'PUC',
   TOLL = 'TOLL',
+  CHALLAN = 'CHALLAN',
   OTHER = 'OTHER',
-}
-
-export enum LicenseStatus {
-  VALID = 'VALID',
-  EXPIRING_SOON = 'EXPIRING_SOON',
-  EXPIRED = 'EXPIRED',
 }
 
 export enum NotificationType {
@@ -69,4 +98,6 @@ export enum NotificationType {
   REMINDER = 'REMINDER',
   SYSTEM = 'SYSTEM',
   TRACKING = 'TRACKING',
+  PAYMENT = 'PAYMENT',
+  LICENSE = 'LICENSE',
 }

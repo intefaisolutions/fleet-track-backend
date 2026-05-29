@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
-import { CompanyStatus } from '../../common/enums';
+import { Document, Types } from 'mongoose';
+import { CompanyStatus, SubscriptionPlanType } from '../../common/enums';
 
 export type CompanyDocument = Company & Document;
 
@@ -31,6 +31,24 @@ export class Company {
     index: true,
   })
   status: CompanyStatus;
+
+  @Prop({ type: String, enum: SubscriptionPlanType, default: SubscriptionPlanType.FREE })
+  planType: SubscriptionPlanType;
+
+  @Prop({ type: Types.ObjectId, ref: 'License', index: true })
+  licenseId?: Types.ObjectId;
+
+  @Prop({ default: 5 })
+  vehicleLimit: number;
+
+  @Prop({ default: 1 })
+  maxAdmins: number;
+
+  @Prop({ default: 5 })
+  maxOwners: number;
+
+  @Prop({ default: 15 })
+  maxDrivers: number;
 }
 
 export const CompanySchema = SchemaFactory.createForClass(Company);
