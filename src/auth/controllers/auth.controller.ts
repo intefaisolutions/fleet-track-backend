@@ -20,6 +20,7 @@ import {
   RefreshTokenDto,
   ForgotPasswordDto,
   ResetPasswordDto,
+  VerifyResetOtpDto,
   SetupSuperAdminDto,
 } from '../dto';
 import { Public } from '../../decorators/public.decorator';
@@ -78,9 +79,17 @@ export class AuthController {
   @Public()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Request password reset email' })
+  @ApiOperation({ summary: 'Send 6-digit OTP to registered email' })
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.authService.forgotPassword(dto);
+  }
+
+  @Public()
+  @Post('verify-reset-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify 6-digit password reset OTP' })
+  verifyResetOtp(@Body() dto: VerifyResetOtpDto) {
+    return this.authService.verifyResetOtp(dto);
   }
 
   @Public()

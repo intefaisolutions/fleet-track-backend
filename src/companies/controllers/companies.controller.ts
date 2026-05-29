@@ -28,7 +28,10 @@ export class CompaniesController {
 
   @Public()
   @Post('register')
-  @ApiOperation({ summary: 'Public company self-registration (pending approval)' })
+  @ApiOperation({
+    summary:
+      'Public registration with license key (creates company + COMPANY_ADMIN; currently ACTIVE after valid license)',
+  })
   register(@Body() dto: RegisterCompanyDto) {
     return this.companiesService.register(dto);
   }
@@ -37,6 +40,10 @@ export class CompaniesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post()
   @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'Super Admin onboard: creates ACTIVE company + COMPANY_ADMIN + FREE subscription',
+  })
   create(@Body() dto: CreateCompanyDto) {
     return this.companiesService.create(dto);
   }

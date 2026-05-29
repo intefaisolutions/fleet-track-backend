@@ -17,6 +17,7 @@ import { RegisterDto } from '../dto/register.dto';
 import { RefreshTokenDto } from '../dto/refresh-token.dto';
 import { ForgotPasswordDto } from '../dto/forgot-password.dto';
 import { ResetPasswordDto } from '../dto/reset-password.dto';
+import { VerifyResetOtpDto } from '../dto/verify-reset-otp.dto';
 import { SetupSuperAdminDto } from '../dto/setup-super-admin.dto';
 import { UserDocument } from '../../users/schemas/user.schema';
 
@@ -187,13 +188,13 @@ export class AuthService {
     const user = await this.usersService.findByEmail(dto.email);
 
     const message =
-      'If an account exists with this email, a password reset link has been sent';
+      'If an account exists with this email, a 6-digit OTP has been sent';
 
     if (!user) {
       return this.responseService.success(message);
     }
 
-    const { token, expires, hash } = this.passwordService.generateResetToken();
+    const { otp, expires, hash } = this.passwordService.generateOtp();
 
     await this.usersService.setPasswordReset(user._id.toString(), hash, expires);
 
@@ -201,11 +202,29 @@ export class AuthService {
     const data: Record<string, unknown> = { expiresAt: expires };
 
     if (isDev) {
-      data.resetToken = token;
-      data.resetUrl = `${this.configService.get<string>('app.baseUrl')}/reset-password?token=${token}&email=${encodeURIComponent(dto.email)}`;
+      data.otp = otp;
     }
 
     return this.responseService.success(message, data);
+  }
+
+  async verifyResetOtp(dto: VerifyResetOtpDto) {
+    const user = await this.usersService.findByEmail(dto.email);
+
+    if (!user?.passwordResetToken || !user.passwordResetExpires) {
+      throw new BadRequestException('Invalid or expired OTP');
+    }
+
+    if (user.passwordResetExpires < new Date()) {
+      throw new BadRequestException('OTP has expired. Please request a new one.');
+    }
+
+    const otpHash = this.passwordService.hashToken(dto.otp);
+    if (user.passwordResetToken !== otpHash) {
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    return this.responseService.success('OTP verified successfully');
   }
 
   async resetPassword(dto: ResetPasswordDto) {

@@ -21,6 +21,14 @@ export class PasswordService {
     return { token, expires, hash };
   }
 
+  /** SRS: 6-digit OTP, valid 10 minutes */
+  generateOtp(): { otp: string; expires: Date; hash: string } {
+    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+    const hash = this.hashToken(otp);
+    return { otp, expires, hash };
+  }
+
   hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }

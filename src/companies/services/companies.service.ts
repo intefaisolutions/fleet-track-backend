@@ -6,7 +6,13 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { CompanyStatus, SubscriptionStatus, UserRole, UserStatus } from '../../common/enums';
+import {
+  CompanyStatus,
+  SubscriptionPlanType,
+  SubscriptionStatus,
+  UserRole,
+  UserStatus,
+} from '../../common/enums';
 import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util';
 import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
@@ -129,14 +135,43 @@ export class CompaniesService {
 
     await this.assertContactUnique(email, phone);
 
+    const hashedPassword = await this.passwordService.hash(dto.adminPassword);
+
     try {
-      const created = await this.companyModel.create({
-        ...dto,
+      const company = await this.companyModel.create({
+        name: dto.name.trim(),
         email,
         phone,
+        address: dto.address,
+        city: dto.city,
+        country: dto.country,
         status: dto.status ?? CompanyStatus.ACTIVE,
+        planType: SubscriptionPlanType.FREE,
       });
-      return this.responseService.created('Company created successfully', created);
+
+      const admin = await this.userModel.create({
+        fullName: dto.adminFullName.trim(),
+        email,
+        phone,
+        password: hashedPassword,
+        role: UserRole.COMPANY_ADMIN,
+        status: UserStatus.ACTIVE,
+        companyId: company._id,
+        isEmailVerified: true,
+      });
+
+      await this.subscriptionModel.create({
+        companyId: company._id,
+        planType: SubscriptionPlanType.FREE,
+        status: SubscriptionStatus.ACTIVE,
+        vehicleLimit: company.vehicleLimit,
+        currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+
+      return this.responseService.created(
+        'Company and company admin created successfully. Admin can login with the provided email and password.',
+        { company, admin: { id: admin._id, email: admin.email, role: admin.role } },
+      );
     } catch (err: unknown) {
       this.handleMongoDuplicate(err);
       throw err;
