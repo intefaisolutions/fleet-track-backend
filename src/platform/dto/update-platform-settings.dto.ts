@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class UpdatePlatformSettingsDto {
   @ApiPropertyOptional({ example: 'business@okhdfcbank' })
@@ -31,4 +31,11 @@ export class UpdatePlatformSettingsDto {
   @IsOptional()
   @IsString()
   supportPhone?: string;
+
+  @ApiPropertyOptional({ example: 20 })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  yearlyDiscountPercent?: number;
 }

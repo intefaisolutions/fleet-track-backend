@@ -32,8 +32,8 @@ export class Company {
   })
   status: CompanyStatus;
 
-  @Prop({ type: String, enum: SubscriptionPlanType, default: SubscriptionPlanType.FREE })
-  planType: SubscriptionPlanType;
+  @Prop({ type: String, default: SubscriptionPlanType.FREE, index: true })
+  planType: string;
 
   @Prop({ type: Types.ObjectId, ref: 'License', index: true })
   licenseId?: Types.ObjectId;

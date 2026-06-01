@@ -1,13 +1,24 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { SubscriptionPlanType } from '../../common/enums';
 
 export type SubscriptionPlanDocument = SubscriptionPlan & Document;
 
 @Schema({ timestamps: true })
 export class SubscriptionPlan {
-  @Prop({ type: String, enum: SubscriptionPlanType, required: true, unique: true })
-  planType: SubscriptionPlanType;
+  @Prop({ required: true, unique: true, uppercase: true, trim: true })
+  planType: string;
+
+  @Prop({ trim: true })
+  displayName?: string;
+
+  @Prop({ trim: true })
+  description?: string;
+
+  @Prop({ type: [String], default: [] })
+  features?: string[];
+
+  @Prop({ default: false })
+  isSystem: boolean;
 
   @Prop({ required: true })
   vehicleLimit: number;

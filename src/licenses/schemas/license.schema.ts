@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
-import { LicenseKeyStatus, SubscriptionPlanType } from '../../common/enums';
+import { LicenseKeyStatus } from '../../common/enums';
 
 export type LicenseDocument = License & Document;
 
@@ -15,8 +15,8 @@ export class License {
   @Prop({ trim: true, lowercase: true })
   contactEmail?: string;
 
-  @Prop({ type: String, enum: SubscriptionPlanType, required: true })
-  planType: SubscriptionPlanType;
+  @Prop({ type: String, required: true, uppercase: true, trim: true })
+  planType: string;
 
   @Prop({ default: 3 })
   maxAdmins: number;

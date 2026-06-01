@@ -6,7 +6,11 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { DEFAULT_PLAN_LIMITS } from '../../common/constants/plan-limits.constant';
-import { LicenseKeyStatus, SubscriptionPlanType } from '../../common/enums';
+import { LicenseKeyStatus } from '../../common/enums';
+import {
+  SubscriptionPlan,
+  SubscriptionPlanDocument,
+} from '../../platform/schemas/subscription-plan.schema';
 import { generateLicenseKey, normalizeLicenseKey } from '../../common/utils/license-key.util';
 import { ResponseService } from '../../common/responses/response.service';
 import { License, LicenseDocument } from '../schemas/license.schema';
@@ -18,22 +22,31 @@ export class LicensesService {
   constructor(
     @InjectModel(License.name)
     private readonly licenseModel: Model<LicenseDocument>,
+    @InjectModel(SubscriptionPlan.name)
+    private readonly planModel: Model<SubscriptionPlanDocument>,
     private readonly responseService: ResponseService,
   ) {}
 
   async create(dto: CreateLicenseDto) {
-    const defaults = DEFAULT_PLAN_LIMITS[dto.planType];
+    const planType = dto.planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType, isActive: true });
+    if (!plan) {
+      throw new BadRequestException(
+        `Plan "${planType}" not found. Create it under Subscription Plans first.`,
+      );
+    }
+
     const licenseKey = generateLicenseKey();
 
     const created = await this.licenseModel.create({
       licenseKey,
       intendedCompanyName: dto.intendedCompanyName,
       contactEmail: dto.contactEmail?.toLowerCase(),
-      planType: dto.planType,
-      maxAdmins: dto.maxAdmins ?? defaults.maxAdmins,
-      maxOwners: dto.maxOwners ?? defaults.maxOwners,
-      maxDrivers: dto.maxDrivers ?? defaults.maxDrivers,
-      maxVehicles: dto.maxVehicles ?? defaults.vehicleLimit,
+      planType,
+      maxAdmins: dto.maxAdmins ?? plan.maxAdmins,
+      maxOwners: dto.maxOwners ?? plan.maxOwners,
+      maxDrivers: dto.maxDrivers ?? plan.maxDrivers,
+      maxVehicles: dto.maxVehicles ?? plan.vehicleLimit,
       validUntil: dto.validUntil,
       status: LicenseKeyStatus.UNUSED,
       notes: dto.notes,
@@ -138,7 +151,19 @@ export class LicensesService {
     return this.responseService.success('License deleted successfully');
   }
 
-  getPlanDefaults(planType: SubscriptionPlanType) {
-    return DEFAULT_PLAN_LIMITS[planType];
+  async getPlanDefaults(planType: string) {
+    const normalized = planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
+    if (plan) {
+      return {
+        vehicleLimit: plan.vehicleLimit,
+        maxAdmins: plan.maxAdmins,
+        maxOwners: plan.maxOwners,
+        maxDrivers: plan.maxDrivers,
+      };
+    }
+    const fallback = DEFAULT_PLAN_LIMITS[normalized as keyof typeof DEFAULT_PLAN_LIMITS];
+    if (fallback) return fallback;
+    throw new BadRequestException(`Plan "${normalized}" not found`);
   }
 }

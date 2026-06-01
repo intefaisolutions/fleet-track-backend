@@ -38,6 +38,10 @@ export class PlatformSettings {
     default: [],
   })
   supportAdmins?: { name: string; email: string; permissions: string[] }[];
+
+  /** Applied when auto-calculating yearly plan prices (0–100) */
+  @Prop({ default: 20 })
+  yearlyDiscountPercent?: number;
 }
 
 export const PlatformSettingsSchema = SchemaFactory.createForClass(PlatformSettings);

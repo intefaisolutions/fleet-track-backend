@@ -1,6 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { SubscriptionPlanType } from '../../common/enums';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
@@ -9,6 +8,7 @@ import { ROLES } from '../../constants';
 import { PlatformService } from '../services/platform.service';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
 import { UpdatePlanPricingDto } from '../dto/update-plan-pricing.dto';
+import { CreatePlanDto } from '../dto/create-plan.dto';
 import { AddSupportAdminDto } from '../dto/support-admin.dto';
 
 @ApiTags('Platform')
@@ -25,6 +25,15 @@ export class PlatformController {
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('pricing-overview')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Plans, yearly discount, and subscription stats for pricing UI' })
+  pricingOverview() {
+    return this.platformService.getPricingOverview();
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('owner-dashboard')
   @Roles(ROLES.SUPER_ADMIN)
   ownerDashboard() {
@@ -33,12 +42,18 @@ export class PlatformController {
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('plans')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Create a custom subscription plan (Super Admin)' })
+  createPlan(@Body() dto: CreatePlanDto) {
+    return this.platformService.createPlan(dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch('plans/:planType')
   @Roles(ROLES.SUPER_ADMIN)
-  updatePlan(
-    @Param('planType') planType: SubscriptionPlanType,
-    @Body() dto: UpdatePlanPricingDto,
-  ) {
+  updatePlan(@Param('planType') planType: string, @Body() dto: UpdatePlanPricingDto) {
     return this.platformService.updatePlanPricing(planType, dto);
   }
 

@@ -16,8 +16,8 @@ export class Payment {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   submittedBy: Types.ObjectId;
 
-  @Prop({ type: String, enum: SubscriptionPlanType, required: true })
-  planType: SubscriptionPlanType;
+  @Prop({ type: String, required: true })
+  planType: string;
 
   @Prop({ type: String, enum: BillingPeriod, default: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;

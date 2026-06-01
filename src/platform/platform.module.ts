@@ -4,6 +4,7 @@ import { License, LicenseSchema } from '../licenses/schemas/license.schema';
 import { Company, CompanySchema } from '../companies/schemas/company.schema';
 import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 import { Vehicle, VehicleSchema } from '../vehicles/schemas/vehicle.schema';
+import { Subscription, SubscriptionSchema } from '../subscriptions/schemas/subscription.schema';
 import { PlatformController } from './controllers/platform.controller';
 import { PlatformService } from './services/platform.service';
 import {
@@ -24,6 +25,7 @@ import {
       { name: Company.name, schema: CompanySchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: Vehicle.name, schema: VehicleSchema },
+      { name: Subscription.name, schema: SubscriptionSchema },
     ]),
   ],
   controllers: [PlatformController],

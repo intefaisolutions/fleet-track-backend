@@ -1,11 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
-import { BillingPeriod, SubscriptionPlanType } from '../../common/enums';
+import { BillingPeriod } from '../../common/enums';
 
 export class SubmitPaymentDto {
-  @ApiProperty({ enum: SubscriptionPlanType })
-  @IsEnum(SubscriptionPlanType)
-  planType: SubscriptionPlanType;
+  @ApiProperty({ example: 'PREMIUM' })
+  @IsString()
+  @MinLength(2)
+  planType: string;
 
   @ApiPropertyOptional({ enum: BillingPeriod, default: 'MONTHLY' })
   @IsOptional()

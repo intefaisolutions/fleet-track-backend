@@ -9,8 +9,8 @@ export class Subscription {
   @Prop({ type: Types.ObjectId, ref: 'Company', required: true, unique: true, index: true })
   companyId: Types.ObjectId;
 
-  @Prop({ type: String, enum: SubscriptionPlanType, required: true })
-  planType: SubscriptionPlanType;
+  @Prop({ type: String, required: true })
+  planType: string;
 
   @Prop({ type: String, enum: SubscriptionStatus, default: SubscriptionStatus.ACTIVE })
   status: SubscriptionStatus;

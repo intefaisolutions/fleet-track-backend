@@ -52,3 +52,34 @@ export const DEFAULT_PLAN_LIMITS: Record<SubscriptionPlanType, PlanLimits> = {
     yearlyPriceInr: 29999,
   },
 };
+
+export const PLAN_MARKETING: Record<
+  SubscriptionPlanType,
+  { displayName: string; description: string; features: string[] }
+> = {
+  [SubscriptionPlanType.FREE]: {
+    displayName: 'Free',
+    description: 'Ideal for trial periods',
+    features: ['Basic GPS Tracking', 'Mobile App Access'],
+  },
+  [SubscriptionPlanType.BASIC]: {
+    displayName: 'Basic',
+    description: 'Small businesses',
+    features: ['Real-time Analytics', 'Route Optimization'],
+  },
+  [SubscriptionPlanType.STANDARD]: {
+    displayName: 'Standard',
+    description: 'Growing fleets',
+    features: ['Geofencing Alerts', 'Fuel Management'],
+  },
+  [SubscriptionPlanType.PREMIUM]: {
+    displayName: 'Premium',
+    description: 'Full enterprise power',
+    features: ['AI Driver Scorecards', 'Priority Support 24/7'],
+  },
+  [SubscriptionPlanType.ENTERPRISE]: {
+    displayName: 'Enterprise',
+    description: 'Unlimited potential',
+    features: ['Dedicated Manager', 'Custom Integrations'],
+  },
+};

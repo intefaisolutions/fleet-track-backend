@@ -3,15 +3,12 @@ import { Type } from 'class-transformer';
 import {
   IsDate,
   IsEmail,
-  IsEnum,
   IsInt,
   IsOptional,
   IsString,
   Min,
   MinLength,
 } from 'class-validator';
-import { SubscriptionPlanType } from '../../common/enums';
-
 export class CreateLicenseDto {
   @ApiPropertyOptional({ example: 'ABC Transport Pvt Ltd' })
   @IsOptional()
@@ -24,9 +21,10 @@ export class CreateLicenseDto {
   @IsEmail()
   contactEmail?: string;
 
-  @ApiProperty({ enum: SubscriptionPlanType, example: 'PREMIUM' })
-  @IsEnum(SubscriptionPlanType)
-  planType: SubscriptionPlanType;
+  @ApiProperty({ example: 'PREMIUM' })
+  @IsString()
+  @MinLength(2)
+  planType: string;
 
   @ApiPropertyOptional({ example: 3 })
   @IsOptional()
