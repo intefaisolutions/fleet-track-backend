@@ -17,7 +17,7 @@ export class ExpensesService {
     private readonly responseService: ResponseService,
   ) {}
 
-  async create(dto: CreateExpenseDto, companyId?: string) {
+  async create(dto: CreateExpenseDto, companyId?: string, recordedBy?: string) {
     if (!companyId) {
       throw new BadRequestException('companyId is required to create an expense');
     }
@@ -33,6 +33,7 @@ export class ExpensesService {
     const created = await this.expenseModel.create({
       companyId,
       vehicleId: dto.vehicleId,
+      recordedBy,
       category: dto.category,
       amount: dto.amount,
       description: dto.description,
@@ -47,7 +48,11 @@ export class ExpensesService {
 
   async findAll(companyId?: string) {
     const filter = companyId ? { companyId } : {};
-    const items = await this.expenseModel.find(filter).sort({ createdAt: -1 });
+    const items = await this.expenseModel
+      .find(filter)
+      .populate('vehicleId', 'registrationNumber make modelName')
+      .populate('recordedBy', 'fullName role')
+      .sort({ expenseDate: -1 });
     return this.responseService.success('Expenses fetched successfully', items);
   }
 

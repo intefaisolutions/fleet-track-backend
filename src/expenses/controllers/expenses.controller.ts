@@ -33,7 +33,7 @@ export class ExpensesController {
     if (!user.companyId) {
       throw new BadRequestException('companyId is required to create an expense');
     }
-    return this.sService.create(dto, user.companyId);
+    return this.sService.create(dto, user.companyId, user.userId);
   }
 
   @Get()

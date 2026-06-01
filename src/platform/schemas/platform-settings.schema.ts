@@ -26,6 +26,18 @@ export class PlatformSettings {
 
   @Prop({ trim: true })
   supportPhone?: string;
+
+  @Prop({
+    type: [
+      {
+        name: { type: String, required: true },
+        email: { type: String, required: true },
+        permissions: { type: [String], default: [] },
+      },
+    ],
+    default: [],
+  })
+  supportAdmins?: { name: string; email: string; permissions: string[] }[];
 }
 
 export const PlatformSettingsSchema = SchemaFactory.createForClass(PlatformSettings);

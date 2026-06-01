@@ -44,12 +44,19 @@ export class VehiclesService {
 
   async findAll(companyId?: string) {
     const filter = companyId ? { companyId } : {};
-    const items = await this.vehicleModel.find(filter).sort({ createdAt: -1 });
+    const items = await this.vehicleModel
+      .find(filter)
+      .populate('ownerId', 'fullName email')
+      .populate('assignedDriverId', 'fullName phone')
+      .sort({ createdAt: -1 });
     return this.responseService.success('Vehicles fetched successfully', items);
   }
 
   async findOne(id: string) {
-    const item = await this.vehicleModel.findById(id);
+    const item = await this.vehicleModel
+      .findById(id)
+      .populate('ownerId', 'fullName email')
+      .populate('assignedDriverId', 'fullName phone licenseNumber');
     if (!item) {
       throw new NotFoundException('Vehicle not found');
     }

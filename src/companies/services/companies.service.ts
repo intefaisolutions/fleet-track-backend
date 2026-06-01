@@ -19,6 +19,7 @@ import { PasswordService } from '../../auth/services/password.service';
 import { LicensesService } from '../../licenses/services/licenses.service';
 import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
+import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { Company, CompanyDocument } from '../schemas/company.schema';
 import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
@@ -33,6 +34,8 @@ export class CompaniesService {
     private readonly userModel: Model<UserDocument>,
     @InjectModel(Subscription.name)
     private readonly subscriptionModel: Model<SubscriptionDocument>,
+    @InjectModel(Vehicle.name)
+    private readonly vehicleModel: Model<VehicleDocument>,
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
     private readonly licensesService: LicensesService,
@@ -180,8 +183,21 @@ export class CompaniesService {
 
   async findAll(status?: CompanyStatus) {
     const filter = status ? { status } : {};
-    const items = await this.companyModel.find(filter).sort({ createdAt: -1 });
-    return this.responseService.success('Companies fetched successfully', items);
+    const items = await this.companyModel.find(filter).sort({ createdAt: -1 }).lean();
+
+    const counts = await this.vehicleModel.aggregate<{ _id: unknown; count: number }>([
+      { $group: { _id: '$companyId', count: { $sum: 1 } } },
+    ]);
+    const countByCompany = new Map(
+      counts.map((row) => [String(row._id), row.count]),
+    );
+
+    const enriched = items.map((company) => ({
+      ...company,
+      vehicleCount: countByCompany.get(String(company._id)) ?? 0,
+    }));
+
+    return this.responseService.success('Companies fetched successfully', enriched);
   }
 
   async findOne(id: string) {

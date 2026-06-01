@@ -18,6 +18,9 @@ export class Vehicle {
   @Prop({ trim: true })
   vin?: string;
 
+  @Prop({ trim: true })
+  fuelType?: string;
+
   @Prop({ type: String, enum: VehicleType })
   vehicleType?: VehicleType;
 

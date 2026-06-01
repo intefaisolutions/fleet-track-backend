@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SubscriptionPlanType } from '../../common/enums';
 import { Public } from '../../decorators/public.decorator';
@@ -9,6 +9,7 @@ import { ROLES } from '../../constants';
 import { PlatformService } from '../services/platform.service';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
 import { UpdatePlanPricingDto } from '../dto/update-plan-pricing.dto';
+import { AddSupportAdminDto } from '../dto/support-admin.dto';
 
 @ApiTags('Platform')
 @Controller('platform')
@@ -55,5 +56,29 @@ export class PlatformController {
   @Roles(ROLES.SUPER_ADMIN)
   updatePaymentSettings(@Body() dto: UpdatePlatformSettingsDto) {
     return this.platformService.updatePaymentSettings(dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('support-admins')
+  @Roles(ROLES.SUPER_ADMIN)
+  getSupportAdmins() {
+    return this.platformService.getSupportAdmins();
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('support-admins')
+  @Roles(ROLES.SUPER_ADMIN)
+  addSupportAdmin(@Body() dto: AddSupportAdminDto) {
+    return this.platformService.addSupportAdmin(dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Delete('support-admins/:email')
+  @Roles(ROLES.SUPER_ADMIN)
+  removeSupportAdmin(@Param('email') email: string) {
+    return this.platformService.removeSupportAdmin(decodeURIComponent(email));
   }
 }

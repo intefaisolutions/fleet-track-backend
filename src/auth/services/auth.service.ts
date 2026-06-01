@@ -19,6 +19,8 @@ import { ForgotPasswordDto } from '../dto/forgot-password.dto';
 import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { VerifyResetOtpDto } from '../dto/verify-reset-otp.dto';
 import { SetupSuperAdminDto } from '../dto/setup-super-admin.dto';
+import { ChangePasswordDto } from '../dto/change-password.dto';
+import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UserDocument } from '../../users/schemas/user.schema';
 
 @Injectable()
@@ -272,6 +274,28 @@ export class AuthService {
     }
 
     return result;
+  }
+
+  async updateProfile(userId: string, dto: UpdateProfileDto) {
+    const result = await this.usersService.update(userId, dto);
+    return this.responseService.success('Profile updated successfully', result.data);
+  }
+
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.usersService.findById(userId);
+    if (!user?.password) {
+      throw new UnauthorizedException('User not found');
+    }
+
+    const valid = await this.passwordService.compare(dto.oldPassword, user.password);
+    if (!valid) {
+      throw new BadRequestException('Current password is incorrect');
+    }
+
+    const hashed = await this.passwordService.hash(dto.newPassword);
+    await this.usersService.updatePassword(userId, hashed);
+
+    return this.responseService.success('Password changed successfully');
   }
 
   async getPermissions(role: string) {
