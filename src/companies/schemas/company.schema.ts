@@ -49,6 +49,30 @@ export class Company {
 
   @Prop({ default: 15 })
   maxDrivers: number;
+
+  @Prop({
+    type: [
+      {
+        name: { type: String, required: true },
+        email: { type: String, required: true },
+        permissions: { type: [String], default: [] },
+        status: {
+          type: String,
+          enum: ['ACTIVE', 'INACTIVE', 'PENDING'],
+          default: 'PENDING',
+        },
+        invitedAt: { type: Date, default: Date.now },
+      },
+    ],
+    default: [],
+  })
+  subAdmins?: {
+    name: string;
+    email: string;
+    permissions: string[];
+    status: string;
+    invitedAt?: Date;
+  }[];
 }
 
 export const CompanySchema = SchemaFactory.createForClass(Company);

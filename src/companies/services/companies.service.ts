@@ -24,6 +24,7 @@ import { Company, CompanyDocument } from '../schemas/company.schema';
 import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
+import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
 
 @Injectable()
 export class CompaniesService {
@@ -300,6 +301,132 @@ export class CompaniesService {
       throw new NotFoundException('Company not found');
     }
     return this.responseService.success('Company deleted successfully');
+  }
+
+  async listSubAdmins(companyId: string) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    const admins = company.subAdmins ?? [];
+    const permissionKeys = new Set<string>();
+    admins.forEach((a) => a.permissions.forEach((p) => permissionKeys.add(p)));
+
+    const stats = {
+      total: admins.length,
+      active: admins.filter((a) => a.status === 'ACTIVE').length,
+      pending: admins.filter((a) => a.status === 'PENDING').length,
+      rolesDefined: permissionKeys.size,
+    };
+
+    return this.responseService.success('Company sub-admins fetched', {
+      admins,
+      stats,
+    });
+  }
+
+  async addSubAdmin(companyId: string, dto: AddCompanySubAdminDto) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    const email = normalizeEmail(dto.email);
+    const existing = company.subAdmins ?? [];
+
+    if (existing.length >= company.maxAdmins) {
+      throw new BadRequestException(
+        `Sub-admin limit reached (${company.maxAdmins}). Upgrade your plan for more seats.`,
+      );
+    }
+
+    if (existing.some((a) => normalizeEmail(a.email) === email)) {
+      throw new BadRequestException('A sub-admin with this email already exists');
+    }
+
+    if (normalizeEmail(company.email) === email) {
+      throw new BadRequestException('Cannot add the primary company email as a sub-admin');
+    }
+
+    await this.assertEmailAvailableForSubAdmin(email, companyId);
+
+    const updated = await this.companyModel.findByIdAndUpdate(
+      companyId,
+      {
+        $push: {
+          subAdmins: {
+            name: dto.name.trim(),
+            email,
+            permissions: dto.permissions,
+            status: 'PENDING',
+            invitedAt: new Date(),
+          },
+        },
+      },
+      { new: true },
+    );
+
+    const admins = updated?.subAdmins ?? [];
+    const permissionKeys = new Set<string>();
+    admins.forEach((a) => a.permissions.forEach((p) => permissionKeys.add(p)));
+
+    return this.responseService.success('Sub-admin invited', {
+      admins,
+      stats: {
+        total: admins.length,
+        active: admins.filter((a) => a.status === 'ACTIVE').length,
+        pending: admins.filter((a) => a.status === 'PENDING').length,
+        rolesDefined: permissionKeys.size,
+      },
+    });
+  }
+
+  async removeSubAdmin(companyId: string, email: string) {
+    const normalized = normalizeEmail(email);
+    const updated = await this.companyModel.findByIdAndUpdate(
+      companyId,
+      { $pull: { subAdmins: { email: normalized } } },
+      { new: true },
+    );
+
+    if (!updated) {
+      throw new NotFoundException('Company not found');
+    }
+
+    const admins = updated.subAdmins ?? [];
+    const permissionKeys = new Set<string>();
+    admins.forEach((a) => a.permissions.forEach((p) => permissionKeys.add(p)));
+
+    return this.responseService.success('Sub-admin removed', {
+      admins,
+      stats: {
+        total: admins.length,
+        active: admins.filter((a) => a.status === 'ACTIVE').length,
+        pending: admins.filter((a) => a.status === 'PENDING').length,
+        rolesDefined: permissionKeys.size,
+      },
+    });
+  }
+
+  private async assertEmailAvailableForSubAdmin(
+    email: string,
+    companyId: string,
+  ) {
+    const normalizedEmail = normalizeEmail(email);
+
+    const otherCompany = await this.companyModel.findOne({
+      _id: { $ne: companyId },
+      email: normalizedEmail,
+    });
+    if (otherCompany) {
+      throw new ConflictException('This email is already registered with another company');
+    }
+
+    const user = await this.userModel.findOne({ email: normalizedEmail });
+    if (user) {
+      throw new ConflictException('This email is already used by another user account');
+    }
   }
 
   private handleMongoDuplicate(err: unknown) {

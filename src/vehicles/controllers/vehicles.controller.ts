@@ -31,19 +31,28 @@ export class VehiclesController {
   constructor(private readonly vehiclesService: VehiclesService) {}
 
   @Post()
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.VEHICLE_OWNER,
+  )
   @Permissions(Permission.VEHICLES_WRITE)
   create(@Body() dto: CreateVehicleDto, @CurrentUser() user: AuthenticatedUser) {
     const companyId = dto.companyId ?? user.companyId;
     if (!companyId) {
       throw new BadRequestException('companyId is required');
     }
-    return this.vehiclesService.create(dto, companyId);
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : dto.ownerId;
+    return this.vehiclesService.create(dto, companyId, ownerId);
   }
 
   @Get()
   findAll(@CurrentUser() user: AuthenticatedUser) {
-    return this.vehiclesService.findAll(user.companyId);
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.vehiclesService.findAll(user.companyId, ownerId);
   }
 
   @Get(':id')

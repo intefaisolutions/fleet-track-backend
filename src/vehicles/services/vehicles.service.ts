@@ -28,22 +28,35 @@ export class VehiclesService {
 
     return {
       registrationNumber: registrationNumber.trim(),
-      make: dto.make?.trim() || dto.type || 'Unknown',
+      make: dto.make?.trim() || 'Fleet',
       modelName: modelName.trim(),
       vehicleType: dto.type,
       vin: dto.vin,
       status: dto.status,
+      fuelType: dto.fuelType?.trim(),
+      currentOdometerKm: dto.currentOdometerKm,
+      year: dto.year,
+      purchaseDate: dto.purchaseDate ? new Date(dto.purchaseDate) : undefined,
+      purchaseCost: dto.purchaseCost,
+      imageUrl: dto.imageUrl,
+      assignedDriverId: dto.assignedDriverId,
     };
   }
 
-  async create(dto: CreateVehicleDto, companyId: string) {
+  async create(dto: CreateVehicleDto, companyId: string, ownerId?: string) {
     const payload = this.mapCreateDto(dto);
-    const created = await this.vehicleModel.create({ ...payload, companyId });
+    const created = await this.vehicleModel.create({
+      ...payload,
+      companyId,
+      ...(ownerId ? { ownerId } : dto.ownerId ? { ownerId: dto.ownerId } : {}),
+    });
     return this.responseService.created('Vehicle created successfully', created);
   }
 
-  async findAll(companyId?: string) {
-    const filter = companyId ? { companyId } : {};
+  async findAll(companyId?: string, ownerId?: string) {
+    const filter: Record<string, unknown> = {};
+    if (companyId) filter.companyId = companyId;
+    if (ownerId) filter.ownerId = ownerId;
     const items = await this.vehicleModel
       .find(filter)
       .populate('ownerId', 'fullName email')

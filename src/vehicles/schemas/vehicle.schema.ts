@@ -39,6 +39,18 @@ export class Vehicle {
   @Prop({ min: 0 })
   currentOdometerKm?: number;
 
+  @Prop({ min: 1900, max: 2100 })
+  year?: number;
+
+  @Prop()
+  purchaseDate?: Date;
+
+  @Prop({ min: 0 })
+  purchaseCost?: number;
+
+  @Prop({ trim: true })
+  imageUrl?: string;
+
   @Prop()
   insuranceExpiry?: Date;
 

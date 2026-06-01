@@ -11,6 +11,11 @@ import {
   SubscriptionStatus,
 } from '../../common/enums';
 import { DEFAULT_PLAN_LIMITS } from '../../common/constants/plan-limits.constant';
+import { SubscriptionPlanType } from '../../common/enums';
+import {
+  SubscriptionPlan,
+  SubscriptionPlanDocument,
+} from '../../platform/schemas/subscription-plan.schema';
 import { ResponseService } from '../../common/responses/response.service';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
@@ -26,8 +31,29 @@ export class PaymentsService {
     private readonly companyModel: Model<CompanyDocument>,
     @InjectModel(Subscription.name)
     private readonly subscriptionModel: Model<SubscriptionDocument>,
+    @InjectModel(SubscriptionPlan.name)
+    private readonly planModel: Model<SubscriptionPlanDocument>,
     private readonly responseService: ResponseService,
   ) {}
+
+  private async resolvePlanLimits(planType: string) {
+    const normalized = planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
+    if (plan) {
+      return {
+        vehicleLimit: plan.vehicleLimit,
+        maxAdmins: plan.maxAdmins,
+        maxOwners: plan.maxOwners,
+        maxDrivers: plan.maxDrivers,
+      };
+    }
+
+    const fallback =
+      DEFAULT_PLAN_LIMITS[normalized as SubscriptionPlanType];
+    if (fallback) return fallback;
+
+    throw new BadRequestException(`Plan "${normalized}" not found`);
+  }
 
   async submit(dto: SubmitPaymentDto, companyId: string, userId: string) {
     if (!companyId) {
@@ -72,7 +98,7 @@ export class PaymentsService {
     payment.verifiedAt = new Date();
     await payment.save();
 
-    const limits = DEFAULT_PLAN_LIMITS[payment.planType];
+    const limits = await this.resolvePlanLimits(payment.planType);
     await this.companyModel.findByIdAndUpdate(payment.companyId, {
       planType: payment.planType,
       vehicleLimit: limits.vehicleLimit,

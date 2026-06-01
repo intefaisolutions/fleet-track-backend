@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -20,6 +21,9 @@ import { CompaniesService } from '../services/companies.service';
 import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
+import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
+import { CurrentUser } from '../../decorators/current-user.decorator';
+import { AuthenticatedUser } from '../../types';
 
 @ApiTags('Companies')
 @Controller('companies')
@@ -55,6 +59,48 @@ export class CompaniesController {
   @ApiQuery({ name: 'status', enum: CompanyStatus, required: false })
   findAll(@Query('status') status?: CompanyStatus) {
     return this.companiesService.findAll(status);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('me/sub-admins')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({ summary: 'List company sub-admins and summary stats' })
+  listSubAdmins(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.listSubAdmins(user.companyId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('me/sub-admins')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({ summary: 'Invite a company sub-admin' })
+  addSubAdmin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: AddCompanySubAdminDto,
+  ) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.addSubAdmin(user.companyId, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Delete('me/sub-admins/:email')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({ summary: 'Remove a company sub-admin' })
+  removeSubAdmin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('email') email: string,
+  ) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.removeSubAdmin(user.companyId, email);
   }
 
   @ApiBearerAuth()

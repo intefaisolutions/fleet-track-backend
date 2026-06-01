@@ -1,9 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsDateString,
   IsEnum,
   IsMongoId,
+  IsNumber,
   IsOptional,
   IsString,
+  Min,
   ValidateIf,
 } from 'class-validator';
 import { VehicleStatus, VehicleType } from '../../common/enums';
@@ -49,8 +52,50 @@ export class CreateVehicleDto {
   @IsEnum(VehicleStatus)
   status?: VehicleStatus;
 
+  @ApiPropertyOptional({ example: 'Diesel' })
+  @IsOptional()
+  @IsString()
+  fuelType?: string;
+
+  @ApiPropertyOptional({ example: 45200 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  currentOdometerKm?: number;
+
+  @ApiPropertyOptional({ example: 2024 })
+  @IsOptional()
+  @IsNumber()
+  year?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  purchaseDate?: string;
+
+  @ApiPropertyOptional({ example: 85000 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  purchaseCost?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsMongoId()
+  assignedDriverId?: string;
+
   @ApiPropertyOptional({ description: 'Required when Super Admin creates for a company' })
   @IsOptional()
   @IsMongoId()
   companyId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsMongoId()
+  ownerId?: string;
 }
