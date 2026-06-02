@@ -34,8 +34,18 @@ export class PlatformController {
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('dashboard')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Super Admin dashboard — SRS 4.1 (stats, revenue chart, payments, top companies)' })
+  superAdminDashboard() {
+    return this.platformService.getSuperAdminDashboard();
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('owner-dashboard')
   @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Alias for GET /platform/dashboard (legacy)' })
   ownerDashboard() {
     return this.platformService.getOwnerDashboard();
   }

@@ -18,6 +18,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { SettingsModule } from './settings/settings.module';
 import { PlatformModule } from './platform/platform.module';
 import { SocketModule } from './socket/socket.module';
+import { MailModule } from './mail/mail.module';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
@@ -29,6 +30,7 @@ import { TransformInterceptor } from './interceptors/transform.interceptor';
   imports: [
     DatabaseModule,
     ResponseModule,
+    MailModule,
     AuthModule,
     CompaniesModule,
     LicensesModule,

@@ -194,35 +194,58 @@ export class PlatformService implements OnModuleInit {
     return this.responseService.success('Payment settings updated', settings);
   }
 
+  async getSuperAdminDashboard() {
+    const data = await this.buildSuperAdminDashboardData();
+    return this.responseService.success('Super Admin dashboard', data);
+  }
+
+  /** @deprecated Use GET /platform/dashboard — kept for backward compatibility */
   async getOwnerDashboard() {
+    const data = await this.buildSuperAdminDashboardData();
+    return this.responseService.success('Platform dashboard', {
+      revenueThisMonth: data.stats.revenueThisMonth,
+      revenueTarget: data.stats.revenueTarget,
+      revenueGoalPercent: data.stats.revenueGoalPercent,
+      activeCompanies: data.stats.activeCompanies,
+      totalLicenses: data.stats.totalLicensesCreated,
+      activeLicenses: data.stats.activeLicenses,
+      expiringSoon: data.stats.expiringSoon,
+      monthlyRevenue: data.revenueChart,
+      topCompanies: data.topCompanies,
+      recentPayments: data.recentPayments,
+    });
+  }
+
+  private async buildSuperAdminDashboardData() {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    const in30Days = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const activeSubscriptionCompanyIds = await this.subscriptionModel.distinct('companyId', {
+      status: SubscriptionStatus.ACTIVE,
+    });
 
     const [
-      plans,
-      settings,
-      totalLicenses,
+      totalLicensesCreated,
       activeLicenses,
       expiringSoon,
       activeCompanies,
       revenueThisMonthAgg,
-      recentPayments,
-      monthlyRevenue,
-      topCompaniesRaw,
+      recentPaymentsRaw,
+      revenueChart,
+      topByVehicles,
     ] = await Promise.all([
-      this.planModel.find({ isActive: true }),
-      this.settingsModel.findOne({ key: 'PLATFORM' }),
       this.licenseModel.countDocuments(),
       this.licenseModel.countDocuments({ status: LicenseKeyStatus.ACTIVE }),
       this.licenseModel.countDocuments({
-        status: LicenseKeyStatus.ACTIVE,
-        validUntil: {
-          $lte: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          $gte: new Date(),
-        },
+        validUntil: { $gte: now, $lte: in30Days },
+        status: { $in: [LicenseKeyStatus.ACTIVE, LicenseKeyStatus.UNUSED] },
       }),
-      this.companyModel.countDocuments({ status: CompanyStatus.ACTIVE }),
+      this.companyModel.countDocuments({
+        _id: { $in: activeSubscriptionCompanyIds },
+        status: CompanyStatus.ACTIVE,
+      }),
       this.paymentModel.aggregate([
         {
           $match: {
@@ -234,15 +257,16 @@ export class PlatformService implements OnModuleInit {
       ]),
       this.paymentModel
         .find()
-        .populate('companyId', 'name')
+        .populate('companyId', 'name email planType')
         .sort({ createdAt: -1 })
-        .limit(8),
-      this.buildMonthlyRevenueTrend(6),
-      this.companyModel
-        .find({ status: CompanyStatus.ACTIVE })
-        .sort({ createdAt: -1 })
-        .limit(5)
+        .limit(10)
         .lean(),
+      this.buildMonthlyRevenueTrend(6),
+      this.vehicleModel.aggregate([
+        { $group: { _id: '$companyId', vehicleCount: { $sum: 1 } } },
+        { $sort: { vehicleCount: -1 } },
+        { $limit: 5 },
+      ]),
     ]);
 
     const revenueThisMonth = revenueThisMonthAgg[0]?.total ?? 0;
@@ -250,59 +274,79 @@ export class PlatformService implements OnModuleInit {
     const revenueGoalPercent =
       revenueTarget > 0 ? Math.min(100, Math.round((revenueThisMonth / revenueTarget) * 100)) : 0;
 
+    const topCompanyIds = topByVehicles.map((r) => r._id).filter(Boolean);
+    const companyDocs = await this.companyModel
+      .find({ _id: { $in: topCompanyIds } })
+      .lean();
+    const companyMap = new Map(companyDocs.map((c) => [String(c._id), c]));
+
     const topCompanies = await Promise.all(
-      topCompaniesRaw.map(async (c) => {
-        const [paymentSum, vehicleCount, licenseCount] = await Promise.all([
-          this.paymentModel.aggregate([
-            {
-              $match: {
-                companyId: c._id,
-                status: PaymentVerificationStatus.VERIFIED,
-              },
+      topByVehicles.map(async (row) => {
+        const company = companyMap.get(String(row._id));
+        const paymentSum = await this.paymentModel.aggregate([
+          {
+            $match: {
+              companyId: row._id,
+              status: PaymentVerificationStatus.VERIFIED,
             },
-            { $group: { _id: null, total: { $sum: '$amount' } } },
-          ]),
-          this.vehicleModel.countDocuments({ companyId: c._id }),
-          this.licenseModel.countDocuments({ companyId: c._id }),
+          },
+          { $group: { _id: null, total: { $sum: '$amount' } } },
         ]);
+        const totalPaidInr = paymentSum[0]?.total ?? 0;
         return {
-          id: c._id,
-          name: c.name,
-          planType: c.planType,
-          mrrInr: paymentSum[0]?.total ?? 0,
-          vehicleCount,
-          licenseCount: licenseCount || 1,
+          id: String(row._id),
+          name: company?.name ?? 'Unknown Company',
+          email: company?.email ?? '',
+          planType: company?.planType ?? 'FREE',
+          vehicleCount: row.vehicleCount as number,
+          totalPaidInr,
+          mrrInr: totalPaidInr,
         };
       }),
     );
 
-    topCompanies.sort((a, b) => b.mrrInr - a.mrrInr);
-
-    return this.responseService.success('Platform dashboard', {
-      plans,
-      paymentSettings: settings,
-      totalLicenses,
-      activeLicenses,
-      expiringSoon,
-      activeCompanies,
-      revenueThisMonth,
-      revenueTarget,
-      revenueGoalPercent,
-      monthlyRevenue,
-      topCompanies: topCompanies.slice(0, 4),
-      recentPayments,
+    const recentPayments = recentPaymentsRaw.map((p) => {
+      const company = p.companyId as
+        | { _id?: unknown; name?: string; email?: string }
+        | undefined;
+      return {
+        _id: String(p._id),
+        transactionId: p.transactionId,
+        amount: p.amount,
+        status: p.status,
+        planType: p.planType,
+        createdAt: (p as { createdAt?: Date }).createdAt?.toISOString(),
+        verifiedAt: p.verifiedAt?.toISOString(),
+        companyId: company?._id ? String(company._id) : String(p.companyId),
+        companyName: company?.name ?? 'Client Company',
+      };
     });
+
+    return {
+      stats: {
+        revenueThisMonth,
+        revenueTarget,
+        revenueGoalPercent,
+        activeCompanies,
+        totalLicensesCreated,
+        activeLicenses,
+        expiringSoon,
+      },
+      revenueChart,
+      recentPayments,
+      topCompanies,
+    };
   }
 
   private async buildMonthlyRevenueTrend(months: number) {
-    const result: { label: string; amount: number }[] = [];
+    const result: { label: string; amount: number; month: number; year: number }[] = [];
     const now = new Date();
 
     for (let i = months - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const start = new Date(d.getFullYear(), d.getMonth(), 1);
       const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59);
-      const label = start.toLocaleDateString('en-IN', { month: 'short' });
+      const label = start.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
 
       const agg = await this.paymentModel.aggregate([
         {
@@ -314,7 +358,12 @@ export class PlatformService implements OnModuleInit {
         { $group: { _id: null, total: { $sum: '$amount' } } },
       ]);
 
-      result.push({ label, amount: agg[0]?.total ?? 0 });
+      result.push({
+        label,
+        amount: agg[0]?.total ?? 0,
+        month: start.getMonth() + 1,
+        year: start.getFullYear(),
+      });
     }
 
     return result;

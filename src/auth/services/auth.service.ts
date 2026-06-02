@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -22,15 +24,19 @@ import { SetupSuperAdminDto } from '../dto/setup-super-admin.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UserDocument } from '../../users/schemas/user.schema';
+import { MailService } from '../../mail/mail.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly usersService: UsersService,
     private readonly passwordService: PasswordService,
     private readonly tokenService: TokenService,
     private readonly configService: ConfigService,
     private readonly responseService: ResponseService,
+    private readonly mailService: MailService,
   ) {}
 
   private sanitizeUser(user: UserDocument) {
@@ -200,10 +206,25 @@ export class AuthService {
 
     await this.usersService.setPasswordReset(user._id.toString(), hash, expires);
 
-    const isDev = this.configService.get<string>('app.nodeEnv') === 'development';
-    const data: Record<string, unknown> = { expiresAt: expires };
+    let emailed = false;
+    try {
+      emailed = await this.mailService.sendPasswordResetOtp(
+        user.email,
+        otp,
+        user.fullName,
+      );
+    } catch (err) {
+      this.logger.error(`Password reset email failed for ${user.email}`, err);
+      throw new InternalServerErrorException(
+        'Could not send reset email. Please try again later.',
+      );
+    }
 
-    if (isDev) {
+    const isDev = this.configService.get<string>('app.nodeEnv') === 'development';
+    const data: Record<string, unknown> = { expiresAt: expires, emailed };
+
+    // Dev fallback when SMTP is not configured (OTP only in logs / API, not in production)
+    if (isDev && !emailed) {
       data.otp = otp;
     }
 
