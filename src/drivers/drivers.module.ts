@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
+import { Company, CompanySchema } from '../companies/schemas/company.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Driver, DriverSchema } from './schemas/driver.schema';
 import { DriversController } from './controllers/drivers.controller';
@@ -12,6 +13,7 @@ import { DriversService } from './services/drivers.service';
     MongooseModule.forFeature([
       { name: Driver.name, schema: DriverSchema },
       { name: User.name, schema: UserSchema },
+      { name: Company.name, schema: CompanySchema },
     ]),
   ],
   controllers: [DriversController],

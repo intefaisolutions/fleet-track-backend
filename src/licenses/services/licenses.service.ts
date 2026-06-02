@@ -1,21 +1,26 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { DEFAULT_PLAN_LIMITS } from '../../common/constants/plan-limits.constant';
 import { LicenseKeyStatus } from '../../common/enums';
 import {
   SubscriptionPlan,
   SubscriptionPlanDocument,
 } from '../../platform/schemas/subscription-plan.schema';
+import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { generateLicenseKey, normalizeLicenseKey } from '../../common/utils/license-key.util';
 import { ResponseService } from '../../common/responses/response.service';
+import { MailService } from '../../mail/mail.service';
 import { License, LicenseDocument } from '../schemas/license.schema';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { UpdateLicenseDto } from '../dto/update-license.dto';
+
+export const LICENSE_GRACE_PERIOD_DAYS = 7;
 
 @Injectable()
 export class LicensesService {
@@ -24,8 +29,126 @@ export class LicensesService {
     private readonly licenseModel: Model<LicenseDocument>,
     @InjectModel(SubscriptionPlan.name)
     private readonly planModel: Model<SubscriptionPlanDocument>,
+    @InjectModel(Company.name)
+    private readonly companyModel: Model<CompanyDocument>,
     private readonly responseService: ResponseService,
+    private readonly mailService: MailService,
   ) {}
+
+  private formatPlanLabel(planType: string) {
+    return planType
+      .split('_')
+      .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  private async refreshExpiredStatus(license: LicenseDocument): Promise<LicenseDocument> {
+    if (
+      license.status === LicenseKeyStatus.REVOKED ||
+      license.status === LicenseKeyStatus.CANCELLED ||
+      license.status === LicenseKeyStatus.UNUSED
+    ) {
+      return license;
+    }
+
+    const now = new Date();
+    if (license.validUntil < now && license.status === LicenseKeyStatus.ACTIVE) {
+      const updated = await this.licenseModel.findByIdAndUpdate(
+        license._id,
+        { status: LicenseKeyStatus.EXPIRED },
+        { new: true },
+      );
+      return updated ?? license;
+    }
+
+    return license;
+  }
+
+  private isWithinGracePeriod(validUntil: Date): boolean {
+    const graceEnd = new Date(validUntil);
+    graceEnd.setDate(graceEnd.getDate() + LICENSE_GRACE_PERIOD_DAYS);
+    return new Date() <= graceEnd;
+  }
+
+  async validateKeyPublic(licenseKey: string) {
+    const result = await this.validateKeyPreview(licenseKey);
+    return this.responseService.success('License validation', result);
+  }
+
+  async validateKeyPreview(licenseKey: string) {
+    const license = await this.findByKey(licenseKey);
+    if (!license) {
+      return { valid: false, message: 'Invalid license key' };
+    }
+
+    const refreshed = await this.refreshExpiredStatus(license);
+
+    if (refreshed.status === LicenseKeyStatus.CANCELLED) {
+      return { valid: false, message: 'This license has been cancelled' };
+    }
+    if (refreshed.status === LicenseKeyStatus.REVOKED) {
+      return { valid: false, message: 'This license has been revoked' };
+    }
+    if (refreshed.status !== LicenseKeyStatus.UNUSED) {
+      return { valid: false, message: 'This license key has already been used' };
+    }
+    if (refreshed.validUntil < new Date()) {
+      return { valid: false, message: 'This license key has expired' };
+    }
+
+    return {
+      valid: true,
+      plan: refreshed.planType,
+      planLabel: this.formatPlanLabel(refreshed.planType),
+      maxAdmins: refreshed.maxAdmins,
+      maxOwners: refreshed.maxOwners,
+      maxDrivers: refreshed.maxDrivers,
+      maxVehicles: refreshed.maxVehicles,
+      validUntil: refreshed.validUntil.toISOString(),
+    };
+  }
+
+  async assertCompanyLicenseAllowsAccess(companyId: string) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new ForbiddenException('Company not found');
+    }
+
+    if (!company.licenseId) {
+      return;
+    }
+
+    const license = await this.licenseModel.findById(company.licenseId);
+    if (!license) {
+      throw new ForbiddenException('Company license not found');
+    }
+
+    const refreshed = await this.refreshExpiredStatus(license);
+
+    if (refreshed.status === LicenseKeyStatus.REVOKED) {
+      throw new ForbiddenException(
+        'Your company license has been revoked. Contact FleetTrack support.',
+      );
+    }
+    if (refreshed.status === LicenseKeyStatus.CANCELLED) {
+      throw new ForbiddenException(
+        'Your company license has been cancelled. Contact FleetTrack support.',
+      );
+    }
+
+    if (
+      refreshed.status === LicenseKeyStatus.EXPIRED ||
+      (refreshed.validUntil < new Date() && !this.isWithinGracePeriod(refreshed.validUntil))
+    ) {
+      throw new ForbiddenException(
+        'Your company license has expired. Please renew to continue.',
+      );
+    }
+
+    if (refreshed.validUntil < new Date() && this.isWithinGracePeriod(refreshed.validUntil)) {
+      return;
+    }
+  }
 
   async create(dto: CreateLicenseDto) {
     const planType = dto.planType.toUpperCase().trim();
@@ -52,7 +175,71 @@ export class LicensesService {
       notes: dto.notes,
     });
 
-    return this.responseService.created('License key generated successfully', created);
+    let emailed = false;
+    if (created.contactEmail) {
+      try {
+        emailed = await this.mailService.sendLicenseKeyEmail(
+          created.contactEmail,
+          created.licenseKey,
+          {
+            companyName: created.intendedCompanyName,
+            planType: this.formatPlanLabel(created.planType),
+            validUntil: created.validUntil.toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            }),
+            maxAdmins: created.maxAdmins,
+            maxOwners: created.maxOwners,
+            maxDrivers: created.maxDrivers,
+            maxVehicles: created.maxVehicles,
+          },
+        );
+      } catch {
+        emailed = false;
+      }
+    }
+
+    return this.responseService.created('License key generated successfully', {
+      ...created.toObject(),
+      emailed,
+    });
+  }
+
+  async sendLicenseEmail(id: string) {
+    const license = await this.licenseModel.findById(id);
+    if (!license) {
+      throw new NotFoundException('License not found');
+    }
+    if (!license.contactEmail) {
+      throw new BadRequestException('No contact email on this license');
+    }
+
+    const emailed = await this.mailService.sendLicenseKeyEmail(
+      license.contactEmail,
+      license.licenseKey,
+      {
+        companyName: license.intendedCompanyName,
+        planType: this.formatPlanLabel(license.planType),
+        validUntil: license.validUntil.toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        }),
+        maxAdmins: license.maxAdmins,
+        maxOwners: license.maxOwners,
+        maxDrivers: license.maxDrivers,
+        maxVehicles: license.maxVehicles,
+      },
+    );
+
+    if (!emailed) {
+      throw new BadRequestException(
+        'Email could not be sent. Check SMTP settings in .env',
+      );
+    }
+
+    return this.responseService.success('License key emailed successfully', { emailed: true });
   }
 
   async findAll(status?: LicenseKeyStatus) {
@@ -74,21 +261,13 @@ export class LicensesService {
   }
 
   async validateForRegistration(licenseKey: string) {
+    const preview = await this.validateKeyPreview(licenseKey);
+    if (!preview.valid) {
+      throw new BadRequestException(preview.message ?? 'Invalid license key');
+    }
     const license = await this.findByKey(licenseKey);
     if (!license) {
       throw new BadRequestException('Invalid license key');
-    }
-    if (license.status === LicenseKeyStatus.CANCELLED) {
-      throw new BadRequestException('This license has been cancelled');
-    }
-    if (license.status === LicenseKeyStatus.REVOKED) {
-      throw new BadRequestException('This license has been revoked');
-    }
-    if (license.status !== LicenseKeyStatus.UNUSED) {
-      throw new BadRequestException('This license key has already been used');
-    }
-    if (license.validUntil < new Date()) {
-      throw new BadRequestException('This license key has expired');
     }
     return license;
   }
@@ -97,7 +276,7 @@ export class LicensesService {
     return this.licenseModel.findByIdAndUpdate(
       licenseId,
       {
-        companyId,
+        companyId: new Types.ObjectId(companyId),
         status: LicenseKeyStatus.ACTIVE,
         usedAt: new Date(),
       },
@@ -116,12 +295,20 @@ export class LicensesService {
   }
 
   async extend(id: string, validUntil: Date) {
+    const existing = await this.licenseModel.findById(id);
+    if (!existing) throw new NotFoundException('License not found');
+
+    const nextStatus =
+      existing.status === LicenseKeyStatus.UNUSED
+        ? LicenseKeyStatus.UNUSED
+        : LicenseKeyStatus.ACTIVE;
+
     const item = await this.licenseModel.findByIdAndUpdate(
       id,
-      { validUntil, status: LicenseKeyStatus.ACTIVE },
+      { validUntil, status: nextStatus },
       { new: true },
     );
-    if (!item) throw new NotFoundException('License not found');
+
     return this.responseService.success('License extended successfully', item);
   }
 

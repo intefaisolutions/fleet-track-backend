@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -28,6 +29,37 @@ export class UsersService {
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
   ) {}
+
+  private async assertCompanyUserLimit(companyId: string, role: UserRole) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new BadRequestException('Company not found');
+    }
+
+    if (role === UserRole.VEHICLE_OWNER) {
+      const count = await this.userModel.countDocuments({
+        companyId,
+        role: UserRole.VEHICLE_OWNER,
+      });
+      if (count >= company.maxOwners) {
+        throw new BadRequestException(
+          `Vehicle owner limit reached (${company.maxOwners}). Upgrade your plan.`,
+        );
+      }
+    }
+
+    if (role === UserRole.COMPANY_ADMIN) {
+      const count = await this.userModel.countDocuments({
+        companyId,
+        role: UserRole.COMPANY_ADMIN,
+      });
+      if (count >= company.maxAdmins) {
+        throw new BadRequestException(
+          `Company admin limit reached (${company.maxAdmins}).`,
+        );
+      }
+    }
+  }
 
   private async assertContactUnique(
     email: string,
@@ -117,6 +149,10 @@ export class UsersService {
     const email = normalizeEmail(dto.email);
     const phone = dto.phone.trim();
     await this.assertContactUnique(email, phone);
+
+    if (dto.companyId && dto.role) {
+      await this.assertCompanyUserLimit(dto.companyId, dto.role);
+    }
 
     const password =
       options?.hashPassword === false

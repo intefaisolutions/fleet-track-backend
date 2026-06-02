@@ -14,5 +14,6 @@ export default registerAs('app', () => ({
   nodeEnv: process.env.NODE_ENV || 'development',
   corsOrigin: parseCorsOrigin(process.env.CORS_ORIGIN),
   baseUrl: process.env.APP_BASE_URL || 'http://localhost:3000',
+  adminUrl: process.env.ADMIN_APP_URL || 'http://localhost:5173',
   superAdminSetupSecret: process.env.SUPER_ADMIN_SETUP_SECRET || '',
 }));

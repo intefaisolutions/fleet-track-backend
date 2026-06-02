@@ -87,4 +87,71 @@ export class MailService {
       throw err;
     }
   }
+
+  async sendLicenseKeyEmail(
+    to: string,
+    licenseKey: string,
+    details: {
+      companyName?: string;
+      planType: string;
+      validUntil: string;
+      maxAdmins: number;
+      maxOwners: number;
+      maxDrivers: number;
+      maxVehicles: number;
+    },
+  ): Promise<boolean> {
+    const enabled = this.configService.get<boolean>('mail.enabled');
+    if (!enabled || !this.isConfigured()) {
+      this.logger.warn(
+        `SMTP not configured; license ${licenseKey} for ${to} (not emailed)`,
+      );
+      return false;
+    }
+
+    const fromName = this.configService.get<string>('mail.fromName');
+    const from = this.configService.get<string>('mail.from');
+    const appName = this.configService.get<string>('app.name') || 'FleetTrack';
+    const registerUrl =
+      this.configService.get<string>('app.adminUrl') ||
+      'http://localhost:5173/register-company';
+
+    const html = `
+      <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
+        <h2 style="color: #0f172a;">Your FleetTrack license key</h2>
+        <p style="color: #475569; line-height: 1.6;">
+          ${details.companyName ? `License issued for <strong>${details.companyName}</strong>.` : 'A new FleetTrack license has been issued for your organization.'}
+        </p>
+        <div style="margin: 24px 0; padding: 20px; background: #f0f9ff; border-radius: 12px; text-align: center;">
+          <p style="margin: 0 0 8px; font-size: 12px; color: #64748b; text-transform: uppercase;">License Key</p>
+          <span style="font-size: 22px; font-weight: 700; letter-spacing: 2px; color: #0284c7; font-family: monospace;">${licenseKey}</span>
+        </div>
+        <table style="width: 100%; font-size: 14px; color: #475569;">
+          <tr><td style="padding: 4px 0;"><strong>Plan</strong></td><td>${details.planType}</td></tr>
+          <tr><td style="padding: 4px 0;"><strong>Valid until</strong></td><td>${details.validUntil}</td></tr>
+          <tr><td style="padding: 4px 0;"><strong>Admins / Owners / Drivers</strong></td><td>${details.maxAdmins} / ${details.maxOwners} / ${details.maxDrivers}</td></tr>
+          <tr><td style="padding: 4px 0;"><strong>Max vehicles</strong></td><td>${details.maxVehicles}</td></tr>
+        </table>
+        <p style="margin-top: 24px;">
+          <a href="${registerUrl}" style="display: inline-block; background: #00AEEF; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600;">Register your company</a>
+        </p>
+        <p style="color: #94a3b8; font-size: 12px; margin-top: 16px;">Use this key on the registration page. Do not share it publicly.</p>
+      </div>
+    `;
+
+    try {
+      await this.getTransporter().sendMail({
+        from: `"${fromName}" <${from}>`,
+        to,
+        subject: `${appName} — Your license key (${details.planType})`,
+        text: `Your FleetTrack license key is ${licenseKey}. Plan: ${details.planType}. Valid until ${details.validUntil}. Register at ${registerUrl}`,
+        html,
+      });
+      this.logger.log(`License key emailed to ${to}`);
+      return true;
+    } catch (err) {
+      this.logger.error(`Failed to send license email to ${to}`, err);
+      throw err;
+    }
+  }
 }

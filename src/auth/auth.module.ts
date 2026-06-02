@@ -7,11 +7,13 @@ import { AuthService } from './services/auth.service';
 import { TokenService } from './services/token.service';
 import { PasswordService } from './services/password.service';
 import { UsersModule } from '../users/users.module';
+import { LicensesModule } from '../licenses/licenses.module';
 import { JwtStrategy } from '../guards/jwt.strategy';
 
 @Module({
   imports: [
     forwardRef(() => UsersModule),
+    LicensesModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

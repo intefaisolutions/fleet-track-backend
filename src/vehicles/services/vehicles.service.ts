@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ResponseService } from '../../common/responses/response.service';
+import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Vehicle, VehicleDocument } from '../schemas/vehicle.schema';
 import { CreateVehicleDto } from '../dto/create-vehicle.dto';
 import { UpdateVehicleDto } from '../dto/update-vehicle.dto';
@@ -12,6 +13,8 @@ export class VehiclesService {
   constructor(
     @InjectModel(Vehicle.name)
     private readonly vehicleModel: Model<VehicleDocument>,
+    @InjectModel(Company.name)
+    private readonly companyModel: Model<CompanyDocument>,
     private readonly responseService: ResponseService,
   ) {}
 
@@ -44,6 +47,17 @@ export class VehiclesService {
   }
 
   async create(dto: CreateVehicleDto, companyId: string, ownerId?: string) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new BadRequestException('Company not found');
+    }
+    const vehicleCount = await this.vehicleModel.countDocuments({ companyId });
+    if (vehicleCount >= company.vehicleLimit) {
+      throw new BadRequestException(
+        `Vehicle limit reached (${company.vehicleLimit}). Upgrade your plan.`,
+      );
+    }
+
     const payload = this.mapCreateDto(dto);
     const created = await this.vehicleModel.create({
       ...payload,

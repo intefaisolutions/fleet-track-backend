@@ -5,6 +5,7 @@ import { DriverStatus, UserRole, UserStatus } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
 import { User, UserDocument } from '../../users/schemas/user.schema';
+import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Driver, DriverDocument } from '../schemas/driver.schema';
 import { CreateDriverDto } from '../dto/create-driver.dto';
 import { UpdateDriverDto } from '../dto/update-driver.dto';
@@ -16,6 +17,8 @@ export class DriversService {
     private readonly driverModel: Model<DriverDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    @InjectModel(Company.name)
+    private readonly companyModel: Model<CompanyDocument>,
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
   ) {}
@@ -23,6 +26,17 @@ export class DriversService {
   async create(dto: CreateDriverDto, companyId?: string) {
     if (!companyId) {
       throw new BadRequestException('companyId is required to create a driver');
+    }
+
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new BadRequestException('Company not found');
+    }
+    const driverCount = await this.driverModel.countDocuments({ companyId });
+    if (driverCount >= company.maxDrivers) {
+      throw new BadRequestException(
+        `Driver limit reached (${company.maxDrivers}). Upgrade your plan.`,
+      );
     }
 
     const hashedPassword = await this.passwordService.hash(dto.password);

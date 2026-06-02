@@ -25,6 +25,8 @@ import { ChangePasswordDto } from '../dto/change-password.dto';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
 import { UserDocument } from '../../users/schemas/user.schema';
 import { MailService } from '../../mail/mail.service';
+import { LicensesService } from '../../licenses/services/licenses.service';
+import { ROLES } from '../../constants/roles.constant';
 
 @Injectable()
 export class AuthService {
@@ -37,7 +39,17 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly responseService: ResponseService,
     private readonly mailService: MailService,
+    private readonly licensesService: LicensesService,
   ) {}
+
+  private async assertLicenseAccessForUser(user: UserDocument) {
+    if (user.role === ROLES.SUPER_ADMIN || !user.companyId) {
+      return;
+    }
+    await this.licensesService.assertCompanyLicenseAllowsAccess(
+      user.companyId.toString(),
+    );
+  }
 
   private sanitizeUser(user: UserDocument) {
     return {
@@ -141,6 +153,8 @@ export class AuthService {
 
     assertUserCanAuthenticate(user.status);
 
+    await this.assertLicenseAccessForUser(user);
+
     const tokens = await this.tokenService.generateTokenPair(user);
 
     await this.usersService.updateRefreshToken(
@@ -166,6 +180,8 @@ export class AuthService {
     }
 
     assertUserCanAuthenticate(user.status);
+
+    await this.assertLicenseAccessForUser(user);
 
     const tokenHash = this.tokenService.hashRefreshToken(dto.refreshToken);
 

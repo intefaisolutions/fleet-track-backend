@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -13,6 +14,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
 import { Type } from 'class-transformer';
 import { IsDate } from 'class-validator';
 import { LicenseKeyStatus } from '../../common/enums';
+import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
 import { Roles } from '../../decorators/roles.decorator';
@@ -31,6 +33,17 @@ class ExtendLicenseDto {
 @Controller('licenses')
 export class LicensesController {
   constructor(private readonly licensesService: LicensesService) {}
+
+  @Public()
+  @Get('validate')
+  @ApiOperation({ summary: 'Validate license key before registration (public)' })
+  @ApiQuery({ name: 'key', required: true })
+  validateKey(@Query('key') key: string) {
+    if (!key?.trim()) {
+      throw new BadRequestException('License key is required');
+    }
+    return this.licensesService.validateKeyPublic(key);
+  }
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -80,6 +93,15 @@ export class LicensesController {
   @Roles(ROLES.SUPER_ADMIN)
   cancel(@Param('id') id: string) {
     return this.licensesService.cancel(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(':id/send-email')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Email license key to contact' })
+  sendEmail(@Param('id') id: string) {
+    return this.licensesService.sendLicenseEmail(id);
   }
 
   @ApiBearerAuth()
