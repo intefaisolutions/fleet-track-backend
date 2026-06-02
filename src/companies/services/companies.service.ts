@@ -269,6 +269,26 @@ export class CompaniesService {
     return this.responseService.success('Company suspended', company);
   }
 
+  async activate(id: string) {
+    const company = await this.companyModel.findById(id);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+    if (company.status !== CompanyStatus.SUSPENDED) {
+      throw new BadRequestException('Only suspended companies can be reactivated');
+    }
+
+    company.status = CompanyStatus.ACTIVE;
+    await company.save();
+
+    await this.userModel.updateMany(
+      { companyId: company._id, status: UserStatus.SUSPENDED },
+      { status: UserStatus.ACTIVE },
+    );
+
+    return this.responseService.success('Company reactivated', company);
+  }
+
   async update(id: string, dto: UpdateCompanyDto) {
     const existing = await this.companyModel.findById(id);
     if (!existing) {

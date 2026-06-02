@@ -130,6 +130,15 @@ export class CompaniesController {
 
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
+  @Patch(':id/activate')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Reactivate a suspended company' })
+  activate(@Param('id') id: string) {
+    return this.companiesService.activate(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.companiesService.findOne(id);
