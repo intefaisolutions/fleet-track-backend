@@ -16,11 +16,16 @@ import {
   PaymentVerificationStatus,
   SubscriptionPlanType,
   SubscriptionStatus,
+  UserRole,
+  UserStatus,
 } from '../../common/enums';
+import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util';
 import { License, LicenseDocument } from '../../licenses/schemas/license.schema';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Payment, PaymentDocument } from '../../payments/schemas/payment.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
+import { User, UserDocument } from '../../users/schemas/user.schema';
+import { PasswordService } from '../../auth/services/password.service';
 import {
   Subscription,
   SubscriptionDocument,
@@ -55,7 +60,10 @@ export class PlatformService implements OnModuleInit {
     private readonly vehicleModel: Model<VehicleDocument>,
     @InjectModel(Subscription.name)
     private readonly subscriptionModel: Model<SubscriptionDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly responseService: ResponseService,
+    private readonly passwordService: PasswordService,
   ) {}
 
   async onModuleInit() {
@@ -197,6 +205,203 @@ export class PlatformService implements OnModuleInit {
   async getSuperAdminDashboard() {
     const data = await this.buildSuperAdminDashboardData();
     return this.responseService.success('Super Admin dashboard', data);
+  }
+
+  async getRevenueOverview(month?: number, year?: number) {
+    const now = new Date();
+    const selectedMonth = month ?? now.getMonth() + 1;
+    const selectedYear = year ?? now.getFullYear();
+
+    if (selectedMonth < 1 || selectedMonth > 12) {
+      throw new BadRequestException('month must be between 1 and 12');
+    }
+
+    const monthStart = new Date(selectedYear, selectedMonth - 1, 1);
+    const monthEnd = new Date(selectedYear, selectedMonth, 0, 23, 59, 59, 999);
+    const yearStart = new Date(selectedYear, 0, 1);
+    const yearEnd = new Date(selectedYear, 11, 31, 23, 59, 59, 999);
+
+    const prevMonth = selectedMonth === 1 ? 12 : selectedMonth - 1;
+    const prevMonthYear = selectedMonth === 1 ? selectedYear - 1 : selectedYear;
+    const prevMonthStart = new Date(prevMonthYear, prevMonth - 1, 1);
+    const prevMonthEnd = new Date(prevMonthYear, prevMonth, 0, 23, 59, 59, 999);
+
+    const prevYearStart = new Date(selectedYear - 1, 0, 1);
+    const prevYearEnd = new Date(selectedYear - 1, 11, 31, 23, 59, 59, 999);
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+    const [
+      monthlyRevenueAgg,
+      prevMonthlyRevenueAgg,
+      yearlyRevenueAgg,
+      prevYearlyRevenueAgg,
+      pendingAgg,
+      overduePendingCount,
+      monthlyTrend,
+      previousYearTrend,
+      revenueByCompanyAgg,
+      planDistribution,
+    ] = await Promise.all([
+      this.sumVerifiedPayments(monthStart, monthEnd),
+      this.sumVerifiedPayments(prevMonthStart, prevMonthEnd),
+      this.sumVerifiedPayments(yearStart, yearEnd),
+      this.sumVerifiedPayments(prevYearStart, prevYearEnd),
+      this.paymentModel.aggregate([
+        { $match: { status: PaymentVerificationStatus.PENDING } },
+        { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+      this.paymentModel.countDocuments({
+        status: PaymentVerificationStatus.PENDING,
+        createdAt: { $lte: thirtyDaysAgo },
+      }),
+      this.buildYearMonthlyRevenue(selectedYear),
+      this.buildYearMonthlyRevenue(selectedYear - 1),
+      this.paymentModel.aggregate([
+        {
+          $match: {
+            verifiedAt: { $gte: monthStart, $lte: monthEnd },
+            status: PaymentVerificationStatus.VERIFIED,
+          },
+        },
+        {
+          $group: {
+            _id: '$companyId',
+            amount: { $sum: '$amount' },
+            planType: { $first: '$planType' },
+          },
+        },
+        { $sort: { amount: -1 } },
+        { $limit: 20 },
+      ]),
+      this.subscriptionModel.aggregate([
+        { $match: { status: SubscriptionStatus.ACTIVE } },
+        { $group: { _id: '$planType', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+    ]);
+
+    const monthlyRevenue = monthlyRevenueAgg;
+    const prevMonthlyRevenue = prevMonthlyRevenueAgg;
+    const yearlyRevenue = yearlyRevenueAgg;
+    const prevYearlyRevenue = prevYearlyRevenueAgg;
+    const pendingTotal = pendingAgg[0]?.total ?? 0;
+    const pendingCount = pendingAgg[0]?.count ?? 0;
+
+    const monthlyTrendPercent =
+      prevMonthlyRevenue > 0
+        ? Math.round(((monthlyRevenue - prevMonthlyRevenue) / prevMonthlyRevenue) * 1000) / 10
+        : monthlyRevenue > 0
+          ? 100
+          : 0;
+    const yearlyTrendPercent =
+      prevYearlyRevenue > 0
+        ? Math.round(((yearlyRevenue - prevYearlyRevenue) / prevYearlyRevenue) * 1000) / 10
+        : yearlyRevenue > 0
+          ? 100
+          : 0;
+
+    const companyIds = revenueByCompanyAgg.map((r) => r._id).filter(Boolean);
+    const companies = await this.companyModel
+      .find({ _id: { $in: companyIds } })
+      .lean();
+    const companyMap = new Map(companies.map((c) => [String(c._id), c]));
+
+    const pendingInMonth = await this.paymentModel
+      .find({
+        status: PaymentVerificationStatus.PENDING,
+        createdAt: { $gte: monthStart, $lte: monthEnd },
+      })
+      .populate('companyId', 'name planType')
+      .lean();
+
+    const revenueByCompanyMap = new Map<
+      string,
+      { name: string; plan: string; amount: number; status: string }
+    >();
+
+    for (const row of revenueByCompanyAgg) {
+      const company = companyMap.get(String(row._id));
+      revenueByCompanyMap.set(String(row._id), {
+        name: company?.name ?? 'Unknown Company',
+        plan: this.formatPlanLabel(row.planType ?? company?.planType ?? 'FREE'),
+        amount: row.amount as number,
+        status: 'PAID',
+      });
+    }
+
+    for (const p of pendingInMonth) {
+      const company = p.companyId as { _id?: unknown; name?: string; planType?: string } | undefined;
+      const id = company?._id ? String(company._id) : String(p.companyId);
+      if (revenueByCompanyMap.has(id)) continue;
+      revenueByCompanyMap.set(id, {
+        name: company?.name ?? 'Unknown Company',
+        plan: this.formatPlanLabel(p.planType ?? company?.planType ?? 'FREE'),
+        amount: p.amount,
+        status: 'PENDING',
+      });
+    }
+
+    const revenueByCompany = Array.from(revenueByCompanyMap.values()).sort(
+      (a, b) => b.amount - a.amount,
+    );
+
+    const planDist = planDistribution.map((p) => ({
+      planType: String(p._id),
+      count: p.count as number,
+    }));
+    const totalSubscriptions = planDist.reduce((sum, p) => sum + p.count, 0);
+
+    return this.responseService.success('Revenue overview fetched', {
+      selectedMonth,
+      selectedYear,
+      monthlyRevenue,
+      yearlyRevenue,
+      pendingPayments: pendingTotal,
+      pendingCount,
+      overduePendingCount,
+      monthlyTrendPercent,
+      yearlyTrendPercent,
+      monthlyTrend,
+      previousYearTrend,
+      revenueByCompany,
+      planDistribution: planDist,
+      totalSubscriptions,
+    });
+  }
+
+  private formatPlanLabel(planType: string) {
+    return planType
+      .split('_')
+      .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  private async sumVerifiedPayments(start: Date, end: Date) {
+    const agg = await this.paymentModel.aggregate([
+      {
+        $match: {
+          status: PaymentVerificationStatus.VERIFIED,
+          verifiedAt: { $gte: start, $lte: end },
+        },
+      },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]);
+    return agg[0]?.total ?? 0;
+  }
+
+  private async buildYearMonthlyRevenue(year: number) {
+    const result: { label: string; amount: number; month: number; year: number }[] = [];
+
+    for (let m = 0; m < 12; m++) {
+      const start = new Date(year, m, 1);
+      const end = new Date(year, m + 1, 0, 23, 59, 59, 999);
+      const label = start.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
+      const amount = await this.sumVerifiedPayments(start, end);
+      result.push({ label, amount, month: m + 1, year });
+    }
+
+    return result;
   }
 
   /** @deprecated Use GET /platform/dashboard — kept for backward compatibility */
@@ -370,57 +575,97 @@ export class PlatformService implements OnModuleInit {
   }
 
   async getSupportAdmins() {
-    const settings = await this.settingsModel.findOne({ key: 'PLATFORM' });
-    return this.responseService.success(
-      'Support admins fetched',
-      settings?.supportAdmins ?? [],
-    );
+    const admins = await this.userModel
+      .find({ role: UserRole.SUPPORT_ADMIN, status: { $ne: UserStatus.INACTIVE } })
+      .select('fullName email phone permissions status createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return this.responseService.success('Support admins fetched', admins.map((a) => ({
+      name: a.fullName,
+      email: a.email,
+      phone: a.phone,
+      permissions: a.permissions ?? [],
+      status: a.status,
+      createdAt: (a as { createdAt?: Date }).createdAt,
+    })));
   }
 
   async addSupportAdmin(dto: {
     name: string;
     email: string;
+    phone: string;
+    password: string;
     permissions: string[];
   }) {
-    const email = dto.email.toLowerCase().trim();
-    const settings = await this.settingsModel.findOne({ key: 'PLATFORM' });
-    const existing = settings?.supportAdmins ?? [];
-
-    if (existing.some((a) => a.email.toLowerCase() === email)) {
-      throw new BadRequestException('Support admin with this email already exists');
+    const email = normalizeEmail(dto.email);
+    const phone = dto.phone.trim();
+    const normalizedPhone = normalizePhone(phone);
+    const permissions = dto.permissions.map((p) => p.trim()).filter(Boolean);
+    if (permissions.length === 0) {
+      throw new BadRequestException('At least one permission is required');
     }
 
-    const updated = await this.settingsModel.findOneAndUpdate(
-      { key: 'PLATFORM' },
-      {
-        $push: {
-          supportAdmins: {
-            name: dto.name.trim(),
-            email,
-            permissions: dto.permissions,
-          },
-        },
-      },
-      { new: true, upsert: true },
-    );
+    const existingUsers = await this.userModel.find({
+      $or: [{ email }, { phone }],
+    });
+    for (const u of existingUsers) {
+      if (normalizeEmail(u.email) === email) {
+        throw new ConflictException('This email is already used by another account');
+      }
+      if (normalizePhone(u.phone) === normalizedPhone) {
+        throw new ConflictException('This phone number is already used by another account');
+      }
+    }
 
-    return this.responseService.success(
-      'Support admin added',
-      updated?.supportAdmins ?? [],
-    );
+    const password = await this.passwordService.hash(dto.password);
+    await this.userModel.create({
+      fullName: dto.name.trim(),
+      email,
+      phone,
+      password,
+      role: UserRole.SUPPORT_ADMIN,
+      status: UserStatus.ACTIVE,
+      isEmailVerified: true,
+      permissions,
+    });
+
+    return this.getSupportAdmins();
   }
 
   async removeSupportAdmin(email: string) {
     const normalized = email.toLowerCase().trim();
-    const updated = await this.settingsModel.findOneAndUpdate(
-      { key: 'PLATFORM' },
-      { $pull: { supportAdmins: { email: normalized } } },
+    const removed = await this.userModel.findOneAndUpdate(
+      { email: normalized, role: UserRole.SUPPORT_ADMIN },
+      { status: UserStatus.INACTIVE },
+      { new: true },
+    );
+    if (!removed) {
+      throw new BadRequestException('Support admin not found');
+    }
+    return this.responseService.success('Support admin removed');
+  }
+
+  async updateSupportAdminPermissions(email: string, permissions: string[]) {
+    const normalized = email.toLowerCase().trim();
+    const cleaned = permissions.map((p) => p.trim()).filter(Boolean);
+    if (cleaned.length === 0) {
+      throw new BadRequestException('At least one permission is required');
+    }
+
+    const updated = await this.userModel.findOneAndUpdate(
+      { email: normalized, role: UserRole.SUPPORT_ADMIN, status: { $ne: UserStatus.INACTIVE } },
+      { $set: { permissions: cleaned } },
       { new: true },
     );
 
-    return this.responseService.success(
-      'Support admin removed',
-      updated?.supportAdmins ?? [],
-    );
+    if (!updated) {
+      throw new BadRequestException('Support admin not found');
+    }
+
+    return this.responseService.success('Support admin permissions updated', {
+      email: updated.email,
+      permissions: updated.permissions ?? [],
+    });
   }
 }

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { AuthModule } from '../auth/auth.module';
 import { License, LicenseSchema } from '../licenses/schemas/license.schema';
 import { Company, CompanySchema } from '../companies/schemas/company.schema';
 import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
@@ -7,6 +8,7 @@ import { Vehicle, VehicleSchema } from '../vehicles/schemas/vehicle.schema';
 import { Subscription, SubscriptionSchema } from '../subscriptions/schemas/subscription.schema';
 import { PlatformController } from './controllers/platform.controller';
 import { PlatformService } from './services/platform.service';
+import { User, UserSchema } from '../users/schemas/user.schema';
 import {
   PlatformSettings,
   PlatformSettingsSchema,
@@ -18,6 +20,7 @@ import {
 
 @Module({
   imports: [
+    AuthModule,
     MongooseModule.forFeature([
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
       { name: PlatformSettings.name, schema: PlatformSettingsSchema },
@@ -26,6 +29,7 @@ import {
       { name: Payment.name, schema: PaymentSchema },
       { name: Vehicle.name, schema: VehicleSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   controllers: [PlatformController],

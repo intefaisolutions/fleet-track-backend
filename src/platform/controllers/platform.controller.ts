@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiQuery } from '@nestjs/swagger';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
@@ -9,7 +10,7 @@ import { PlatformService } from '../services/platform.service';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
 import { UpdatePlanPricingDto } from '../dto/update-plan-pricing.dto';
 import { CreatePlanDto } from '../dto/create-plan.dto';
-import { AddSupportAdminDto } from '../dto/support-admin.dto';
+import { AddSupportAdminDto, UpdateSupportAdminPermissionsDto } from '../dto/support-admin.dto';
 
 @ApiTags('Platform')
 @Controller('platform')
@@ -30,6 +31,22 @@ export class PlatformController {
   @ApiOperation({ summary: 'Plans, yearly discount, and subscription stats for pricing UI' })
   pricingOverview() {
     return this.platformService.getPricingOverview();
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('revenue-overview')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Revenue overview — SRS 4.6 (monthly/yearly, by company, plan distribution)' })
+  @ApiQuery({ name: 'month', required: false, type: Number })
+  @ApiQuery({ name: 'year', required: false, type: Number })
+  revenueOverview(
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    const m = month ? parseInt(month, 10) : undefined;
+    const y = year ? parseInt(year, 10) : undefined;
+    return this.platformService.getRevenueOverview(m, y);
   }
 
   @ApiBearerAuth()
@@ -97,6 +114,20 @@ export class PlatformController {
   @Roles(ROLES.SUPER_ADMIN)
   addSupportAdmin(@Body() dto: AddSupportAdminDto) {
     return this.platformService.addSupportAdmin(dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Patch('support-admins/:email/permissions')
+  @Roles(ROLES.SUPER_ADMIN)
+  updateSupportAdminPermissions(
+    @Param('email') email: string,
+    @Body() dto: UpdateSupportAdminPermissionsDto,
+  ) {
+    return this.platformService.updateSupportAdminPermissions(
+      decodeURIComponent(email),
+      dto.permissions,
+    );
   }
 
   @ApiBearerAuth()

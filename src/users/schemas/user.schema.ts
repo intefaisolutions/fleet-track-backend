@@ -38,6 +38,9 @@ export class User {
   @Prop({ type: Types.ObjectId, ref: 'Company', index: true })
   companyId?: Types.ObjectId;
 
+  @Prop({ type: [String], default: [] })
+  permissions?: string[];
+
   @Prop({ select: false })
   refreshTokenHash?: string;
 

@@ -52,6 +52,7 @@ export class AuthService {
   }
 
   private sanitizeUser(user: UserDocument) {
+    const isSupportAdmin = user.role === UserRole.SUPPORT_ADMIN;
     return {
       id: user._id,
       fullName: user.fullName,
@@ -63,8 +64,9 @@ export class AuthService {
       isEmailVerified: user.isEmailVerified,
       companyId: user.companyId,
       lastLogin: user.lastLogin,
-      permissions:
-        ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? [],
+      permissions: isSupportAdmin
+        ? (user.permissions ?? [])
+        : (ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? []),
     };
   }
 
@@ -306,7 +308,9 @@ export class AuthService {
       return this.responseService.success('Profile fetched successfully', {
         ...JSON.parse(JSON.stringify(result.data)),
         permissions:
-          ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? [],
+          user.role === UserRole.SUPPORT_ADMIN
+            ? (((result.data as unknown as { permissions?: string[] }).permissions) ?? [])
+            : (ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? []),
       });
     }
 
