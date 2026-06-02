@@ -50,7 +50,11 @@ export class ExpensesService {
     const filter = companyId ? { companyId } : {};
     const items = await this.expenseModel
       .find(filter)
-      .populate('vehicleId', 'registrationNumber make modelName')
+      .populate({
+        path: 'vehicleId',
+        select: 'registrationNumber make modelName ownerId',
+        populate: { path: 'ownerId', select: 'fullName email' },
+      })
       .populate('recordedBy', 'fullName role')
       .sort({ expenseDate: -1 });
     return this.responseService.success('Expenses fetched successfully', items);

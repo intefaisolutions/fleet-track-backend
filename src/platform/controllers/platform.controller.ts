@@ -87,7 +87,7 @@ export class PlatformController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('payment-settings')
-  @Roles(ROLES.SUPER_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
   getPaymentSettings() {
     return this.platformService.getPaymentSettings();
   }
