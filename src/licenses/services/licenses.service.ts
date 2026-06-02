@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -13,6 +14,7 @@ import {
   SubscriptionPlanDocument,
 } from '../../platform/schemas/subscription-plan.schema';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
+import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util';
 import { generateLicenseKey, normalizeLicenseKey } from '../../common/utils/license-key.util';
 import { ResponseService } from '../../common/responses/response.service';
 import { MailService } from '../../mail/mail.service';
@@ -100,6 +102,9 @@ export class LicensesService {
       valid: true,
       plan: refreshed.planType,
       planLabel: this.formatPlanLabel(refreshed.planType),
+      intendedCompanyName: refreshed.intendedCompanyName,
+      contactEmail: refreshed.contactEmail,
+      contactPhone: refreshed.contactPhone,
       maxAdmins: refreshed.maxAdmins,
       maxOwners: refreshed.maxOwners,
       maxDrivers: refreshed.maxDrivers,
@@ -150,6 +155,39 @@ export class LicensesService {
     }
   }
 
+  private async assertUniqueLicenseContact(contactEmail?: string, contactPhone?: string) {
+    const activeFilter = { status: { $ne: LicenseKeyStatus.CANCELLED } };
+
+    if (contactEmail) {
+      const email = normalizeEmail(contactEmail);
+      const existingForEmail = await this.licenseModel.findOne({
+        ...activeFilter,
+        contactEmail: email,
+      });
+      if (existingForEmail) {
+        throw new ConflictException(
+          'A license already exists for this contact email. Use a different email or cancel the existing license first.',
+        );
+      }
+    }
+
+    if (contactPhone) {
+      const phoneDigits = normalizePhone(contactPhone);
+      const withPhone = await this.licenseModel.find({
+        ...activeFilter,
+        contactPhone: { $exists: true, $nin: [null, ''] },
+      });
+      const duplicatePhone = withPhone.some(
+        (license) => license.contactPhone && normalizePhone(license.contactPhone) === phoneDigits,
+      );
+      if (duplicatePhone) {
+        throw new ConflictException(
+          'A license already exists for this contact phone number. Use a different number or cancel the existing license first.',
+        );
+      }
+    }
+  }
+
   async create(dto: CreateLicenseDto) {
     const planType = dto.planType.toUpperCase().trim();
     const plan = await this.planModel.findOne({ planType, isActive: true });
@@ -159,12 +197,17 @@ export class LicensesService {
       );
     }
 
+    const normalizedEmail = dto.contactEmail ? normalizeEmail(dto.contactEmail) : undefined;
+    const normalizedPhone = dto.contactPhone?.trim();
+    await this.assertUniqueLicenseContact(normalizedEmail, normalizedPhone);
+
     const licenseKey = generateLicenseKey();
 
     const created = await this.licenseModel.create({
       licenseKey,
       intendedCompanyName: dto.intendedCompanyName,
-      contactEmail: dto.contactEmail?.toLowerCase(),
+      contactEmail: normalizedEmail,
+      contactPhone: normalizedPhone,
       planType,
       maxAdmins: dto.maxAdmins ?? plan.maxAdmins,
       maxOwners: dto.maxOwners ?? plan.maxOwners,
@@ -183,6 +226,7 @@ export class LicensesService {
           created.licenseKey,
           {
             companyName: created.intendedCompanyName,
+            contactPhone: created.contactPhone,
             planType: this.formatPlanLabel(created.planType),
             validUntil: created.validUntil.toLocaleDateString('en-IN', {
               day: 'numeric',
@@ -220,6 +264,7 @@ export class LicensesService {
       license.licenseKey,
       {
         companyName: license.intendedCompanyName,
+        contactPhone: license.contactPhone,
         planType: this.formatPlanLabel(license.planType),
         validUntil: license.validUntil.toLocaleDateString('en-IN', {
           day: 'numeric',

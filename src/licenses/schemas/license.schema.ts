@@ -15,6 +15,9 @@ export class License {
   @Prop({ trim: true, lowercase: true })
   contactEmail?: string;
 
+  @Prop({ trim: true })
+  contactPhone?: string;
+
   @Prop({ type: String, required: true, uppercase: true, trim: true })
   planType: string;
 

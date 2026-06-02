@@ -9,6 +9,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { IsValidPhoneNumber } from '../../common/validators/phone.validator';
 export class CreateLicenseDto {
   @ApiPropertyOptional({ example: 'ABC Transport Pvt Ltd' })
   @IsOptional()
@@ -20,6 +21,12 @@ export class CreateLicenseDto {
   @IsOptional()
   @IsEmail()
   contactEmail?: string;
+
+  @ApiPropertyOptional({ example: '+919876543210' })
+  @IsOptional()
+  @IsString()
+  @IsValidPhoneNumber()
+  contactPhone?: string;
 
   @ApiProperty({ example: 'PREMIUM' })
   @IsString()

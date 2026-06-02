@@ -93,6 +93,7 @@ export class MailService {
     licenseKey: string,
     details: {
       companyName?: string;
+      contactPhone?: string;
       planType: string;
       validUntil: string;
       maxAdmins: number;
@@ -112,9 +113,15 @@ export class MailService {
     const fromName = this.configService.get<string>('mail.fromName');
     const from = this.configService.get<string>('mail.from');
     const appName = this.configService.get<string>('app.name') || 'FleetTrack';
-    const registerUrl =
-      this.configService.get<string>('app.adminUrl') ||
-      'http://localhost:5173/register-company';
+    const adminUrl = this.configService.get<string>('app.adminUrl') || 'http://localhost:5173';
+    const normalized = adminUrl.replace(/\/$/, '');
+    const registerPath = normalized.endsWith('/register-company')
+      ? normalized
+      : `${normalized}/register-company`;
+    const phoneParam = details.contactPhone
+      ? `&phone=${encodeURIComponent(details.contactPhone)}`
+      : '';
+    const registerUrl = `${registerPath}?licenseKey=${encodeURIComponent(licenseKey)}&companyName=${encodeURIComponent(details.companyName ?? '')}&email=${encodeURIComponent(to)}${phoneParam}`;
 
     const html = `
       <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
