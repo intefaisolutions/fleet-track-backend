@@ -26,10 +26,12 @@ export class ReportsController {
     ROLES.COMPANY_ADMIN,
     ROLES.FLEET_MANAGER,
     ROLES.ACCOUNTANT,
+    ROLES.VEHICLE_OWNER,
   )
   @ApiOperation({ summary: 'Fleet dashboard metrics' })
   getDashboard(@CurrentUser() user: AuthenticatedUser) {
-    return this.reportsService.getDashboard(user.companyId);
+    const ownerId = user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.reportsService.getDashboard(user.companyId, ownerId);
   }
 
   @Get('revenue')

@@ -26,15 +26,28 @@ export class ReportsService {
     private readonly responseService: ResponseService,
   ) {}
 
-  async getDashboard(companyId?: string) {
+  async getDashboard(companyId?: string, ownerId?: string) {
     if (!companyId) {
       throw new BadRequestException('companyId is required for company dashboard');
     }
 
     const companyOid = new Types.ObjectId(companyId);
     const filter = { companyId: companyOid };
+    const ownerOid = ownerId ? new Types.ObjectId(ownerId) : null;
+    const ownerVehicleFilter = ownerOid ? { ...filter, ownerId: ownerOid } : filter;
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const ownedVehicles = ownerOid
+      ? await this.vehicleModel
+          .find(ownerVehicleFilter)
+          .select('_id registrationNumber make modelName currentOdometerKm createdAt')
+          .lean()
+      : [];
+    const ownedVehicleIds = ownedVehicles.map((v) => v._id);
+    const expenseFilter = ownerOid
+      ? { ...filter, vehicleId: { $in: ownedVehicleIds } }
+      : filter;
 
     const [
       totalVehicles,
@@ -48,22 +61,27 @@ export class ReportsService {
       company,
       recentExpenses,
       topOwnersAgg,
+      totalExpenses,
+      ownerRecentExpenses,
+      ownerMostExpensiveAgg,
     ] = await Promise.all([
-      this.vehicleModel.countDocuments(filter),
-      this.userModel.countDocuments({
-        companyId: companyOid,
-        role: UserRole.VEHICLE_OWNER,
-      }),
+      this.vehicleModel.countDocuments(ownerVehicleFilter),
+      ownerOid
+        ? this.userModel.countDocuments({ _id: ownerOid, role: UserRole.VEHICLE_OWNER })
+        : this.userModel.countDocuments({
+            companyId: companyOid,
+            role: UserRole.VEHICLE_OWNER,
+          }),
       this.driverModel.countDocuments(filter),
       this.driverModel.countDocuments({ ...filter, isActive: true }),
       this.vehicleModel.countDocuments({
-        ...filter,
+        ...ownerVehicleFilter,
         createdAt: { $gte: startOfMonth },
       }),
       this.expenseModel.aggregate([
         {
           $match: {
-            companyId: companyOid,
+            ...expenseFilter,
             createdAt: { $gte: startOfMonth },
           },
         },
@@ -71,7 +89,7 @@ export class ReportsService {
       ]),
       this.vehicleModel
         .find({
-          ...filter,
+          ...ownerVehicleFilter,
           status: VehicleStatus.MAINTENANCE,
         })
         .sort({ updatedAt: -1 })
@@ -80,17 +98,45 @@ export class ReportsService {
       this.subscriptionModel.findOne({ companyId: companyOid }).lean(),
       this.companyModel.findById(companyId).lean(),
       this.expenseModel
-        .find(filter)
+        .find(expenseFilter)
         .populate('vehicleId', 'registrationNumber')
         .sort({ createdAt: -1 })
         .limit(6)
         .lean(),
-      this.vehicleModel.aggregate([
-        { $match: { companyId: companyOid, ownerId: { $exists: true, $ne: null } } },
-        { $group: { _id: '$ownerId', fleetSize: { $sum: 1 } } },
-        { $sort: { fleetSize: -1 } },
-        { $limit: 5 },
-      ]),
+      ownerOid
+        ? Promise.resolve([])
+        : this.vehicleModel.aggregate([
+            { $match: { companyId: companyOid, ownerId: { $exists: true, $ne: null } } },
+            { $group: { _id: '$ownerId', fleetSize: { $sum: 1 } } },
+            { $sort: { fleetSize: -1 } },
+            { $limit: 5 },
+          ]),
+      this.expenseModel.countDocuments(expenseFilter),
+      ownerOid
+        ? this.expenseModel
+            .find(expenseFilter)
+            .populate('vehicleId', 'registrationNumber')
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .lean()
+        : Promise.resolve([]),
+      ownerOid
+        ? this.expenseModel.aggregate([
+            { $match: expenseFilter },
+            { $group: { _id: '$vehicleId', total: { $sum: '$amount' } } },
+            { $sort: { total: -1 } },
+            { $limit: 1 },
+            {
+              $lookup: {
+                from: 'vehicles',
+                localField: '_id',
+                foreignField: '_id',
+                as: 'vehicle',
+              },
+            },
+            { $unwind: '$vehicle' },
+          ])
+        : Promise.resolve([]),
     ]);
 
     const expensesThisMonth = expensesThisMonthAgg[0]?.total ?? 0;
@@ -101,24 +147,33 @@ export class ReportsService {
         ? Math.round((vehiclesAddedThisMonth / totalVehicles) * 100)
         : 0;
 
-    const ownerIds = topOwnersAgg.map((r) => r._id as Types.ObjectId);
-    const owners = await this.userModel
-      .find({ _id: { $in: ownerIds } })
-      .select('fullName email')
-      .lean();
-    const ownerMap = new Map(owners.map((o) => [String(o._id), o]));
-    const maxFleet = topOwnersAgg[0]?.fleetSize ?? 1;
+    let topOwners: Array<{
+      id: string;
+      name: string;
+      email: string;
+      fleetSize: number;
+      fleetPercent: number;
+    }> = [];
+    if (!ownerOid) {
+      const ownerIds = topOwnersAgg.map((r) => r._id as Types.ObjectId);
+      const owners = await this.userModel
+        .find({ _id: { $in: ownerIds } })
+        .select('fullName email')
+        .lean();
+      const ownerMap = new Map(owners.map((o) => [String(o._id), o]));
+      const maxFleet = topOwnersAgg[0]?.fleetSize ?? 1;
 
-    const topOwners = topOwnersAgg.map((row) => {
-      const owner = ownerMap.get(String(row._id));
-      return {
-        id: String(row._id),
-        name: owner?.fullName ?? 'Unknown Owner',
-        email: owner?.email ?? '',
-        fleetSize: row.fleetSize as number,
-        fleetPercent: Math.round(((row.fleetSize as number) / maxFleet) * 100),
-      };
-    });
+      topOwners = topOwnersAgg.map((row) => {
+        const owner = ownerMap.get(String(row._id));
+        return {
+          id: String(row._id),
+          name: owner?.fullName ?? 'Unknown Owner',
+          email: owner?.email ?? '',
+          fleetSize: row.fleetSize as number,
+          fleetPercent: Math.round(((row.fleetSize as number) / maxFleet) * 100),
+        };
+      });
+    }
 
     const recentActivities = [
       ...maintenanceVehicles.map((v) => ({
@@ -158,6 +213,52 @@ export class ReportsService {
       .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
       .join(' ');
 
+    const upcomingServices = ownerOid
+      ? ownedVehicles
+          .map((v) => {
+            const odometer = v.currentOdometerKm ?? 0;
+            const dueInKm = 10000 - (odometer % 10000 || 10000);
+            return {
+              id: String(v._id),
+              registrationNumber: v.registrationNumber,
+              label: `${v.registrationNumber} - ${v.make} ${v.modelName}`,
+              dueInKm,
+            };
+          })
+          .filter((v) => v.dueInKm <= 1500)
+          .sort((a, b) => a.dueInKm - b.dueInKm)
+          .slice(0, 3)
+      : [];
+
+    const mostExpensiveVehicle = ownerOid
+      ? ownerMostExpensiveAgg[0]
+        ? {
+            registrationNumber:
+              ownerMostExpensiveAgg[0].vehicle?.registrationNumber ?? 'Unknown',
+            label: `${ownerMostExpensiveAgg[0].vehicle?.registrationNumber ?? 'Unknown'} (${
+              ownerMostExpensiveAgg[0].vehicle?.make ?? 'Vehicle'
+            } ${ownerMostExpensiveAgg[0].vehicle?.modelName ?? ''})`.trim(),
+            amount: ownerMostExpensiveAgg[0].total ?? 0,
+          }
+        : null
+      : null;
+
+    const ownerRecentExpenseRows = ownerOid
+      ? ownerRecentExpenses.map((e) => {
+          const reg =
+            e.vehicleId && typeof e.vehicleId === 'object' && 'registrationNumber' in e.vehicleId
+              ? (e.vehicleId as { registrationNumber: string }).registrationNumber
+              : 'Unknown';
+          return {
+            id: String(e._id),
+            category: e.category,
+            amount: e.amount,
+            registrationNumber: reg,
+            createdAt: (e as { createdAt?: Date }).createdAt?.toISOString() ?? new Date().toISOString(),
+          };
+        })
+      : [];
+
     return this.responseService.success('Dashboard report fetched', {
       totalVehicles,
       totalOwners,
@@ -174,8 +275,12 @@ export class ReportsService {
       },
       recentActivities,
       topOwners,
-      totalExpenses: await this.expenseModel.countDocuments(filter),
+      totalExpenses,
       totalExpenseAmount: expensesThisMonth,
+      myVehiclesLimit: subscription?.vehicleLimit ?? company?.vehicleLimit ?? 0,
+      mostExpensiveVehicle,
+      upcomingServices,
+      recentOwnerExpenses: ownerRecentExpenseRows,
     });
   }
 

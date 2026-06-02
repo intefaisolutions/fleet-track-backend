@@ -27,6 +27,7 @@ import { UserDocument } from '../../users/schemas/user.schema';
 import { MailService } from '../../mail/mail.service';
 import { LicensesService } from '../../licenses/services/licenses.service';
 import { ROLES } from '../../constants/roles.constant';
+import { normalizeEmail } from '../../common/utils/contact.util';
 
 @Injectable()
 export class AuthService {
@@ -138,7 +139,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.usersService.findByEmail(dto.email);
+    const user = await this.usersService.findByEmail(normalizeEmail(dto.email));
 
     if (!user) {
       throw new UnauthorizedException('Invalid email or password');

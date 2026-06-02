@@ -28,17 +28,26 @@ export class ExpensesController {
   constructor(private readonly sService: ExpensesService) {}
 
   @Post()
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.VEHICLE_OWNER,
+  )
   create(@Body() dto: CreateExpenseDto, @CurrentUser() user: AuthenticatedUser) {
     if (!user.companyId) {
       throw new BadRequestException('companyId is required to create an expense');
     }
-    return this.sService.create(dto, user.companyId, user.userId);
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.sService.create(dto, user.companyId, user.userId, ownerId);
   }
 
   @Get()
   findAll(@CurrentUser() user: AuthenticatedUser) {
-    return this.sService.findAll(user.companyId);
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.sService.findAll(user.companyId, ownerId);
   }
 
   @Get(':id')
@@ -47,14 +56,27 @@ export class ExpensesController {
   }
 
   @Patch(':id')
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
-  update(@Param('id') id: string, @Body() dto: UpdateExpenseDto) {
-    return this.sService.update(id, dto);
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.VEHICLE_OWNER,
+  )
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateExpenseDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.sService.update(id, dto, ownerId);
   }
 
   @Delete(':id')
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
-  remove(@Param('id') id: string) {
-    return this.sService.remove(id);
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.sService.remove(id, ownerId);
   }
 }

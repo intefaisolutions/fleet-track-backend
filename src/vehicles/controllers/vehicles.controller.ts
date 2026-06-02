@@ -61,20 +61,44 @@ export class VehiclesController {
   }
 
   @Patch(':id')
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
-  update(@Param('id') id: string, @Body() dto: UpdateVehicleDto) {
-    return this.vehiclesService.update(id, dto);
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.VEHICLE_OWNER,
+  )
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateVehicleDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.vehiclesService.update(id, dto, ownerId);
   }
 
   @Patch(':id/assign-driver')
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.FLEET_MANAGER)
-  assignDriver(@Param('id') id: string, @Body() dto: AssignDriverDto) {
-    return this.vehiclesService.assignDriver(id, dto);
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.VEHICLE_OWNER,
+  )
+  assignDriver(
+    @Param('id') id: string,
+    @Body() dto: AssignDriverDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.vehiclesService.assignDriver(id, dto, ownerId);
   }
 
   @Delete(':id')
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
-  remove(@Param('id') id: string) {
-    return this.vehiclesService.remove(id);
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    const ownerId =
+      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    return this.vehiclesService.remove(id, ownerId);
   }
 }

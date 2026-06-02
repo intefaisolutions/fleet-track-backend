@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Company, CompanySchema } from '../companies/schemas/company.schema';
+import {
+  Subscription,
+  SubscriptionSchema,
+} from '../subscriptions/schemas/subscription.schema';
 import { Vehicle, VehicleSchema } from './schemas/vehicle.schema';
 import { VehiclesController } from './controllers/vehicles.controller';
 import { VehiclesService } from './services/vehicles.service';
@@ -10,6 +14,7 @@ import { VehiclesService } from './services/vehicles.service';
     MongooseModule.forFeature([
       { name: Vehicle.name, schema: VehicleSchema },
       { name: Company.name, schema: CompanySchema },
+      { name: Subscription.name, schema: SubscriptionSchema },
     ]),
   ],
   controllers: [VehiclesController],

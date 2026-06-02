@@ -1,6 +1,11 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { ResponseService } from '../../common/responses/response.service';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { Expense, ExpenseDocument } from '../schemas/expense.schema';
@@ -17,7 +22,32 @@ export class ExpensesService {
     private readonly responseService: ResponseService,
   ) {}
 
-  async create(dto: CreateExpenseDto, companyId?: string, recordedBy?: string) {
+  private async assertOwnerVehicle(vehicleId: string, ownerId: string) {
+    const vehicle = await this.vehicleModel.findById(vehicleId);
+    if (!vehicle) {
+      throw new NotFoundException('Vehicle not found');
+    }
+    if (vehicle.ownerId?.toString() !== ownerId) {
+      throw new ForbiddenException('You can only manage expenses for your own vehicles');
+    }
+    return vehicle;
+  }
+
+  private async assertOwnerExpense(expenseId: string, ownerId: string) {
+    const expense = await this.expenseModel.findById(expenseId);
+    if (!expense) {
+      throw new NotFoundException('Expense not found');
+    }
+    await this.assertOwnerVehicle(expense.vehicleId.toString(), ownerId);
+    return expense;
+  }
+
+  async create(
+    dto: CreateExpenseDto,
+    companyId?: string,
+    recordedBy?: string,
+    ownerId?: string,
+  ) {
     if (!companyId) {
       throw new BadRequestException('companyId is required to create an expense');
     }
@@ -28,6 +58,9 @@ export class ExpensesService {
     }
     if (vehicle.companyId.toString() !== companyId) {
       throw new BadRequestException('Vehicle does not belong to your company');
+    }
+    if (ownerId && vehicle.ownerId?.toString() !== ownerId) {
+      throw new ForbiddenException('You can only add expenses for your own vehicles');
     }
 
     const created = await this.expenseModel.create({
@@ -46,8 +79,18 @@ export class ExpensesService {
     return this.responseService.created('Expense created successfully', created);
   }
 
-  async findAll(companyId?: string) {
-    const filter = companyId ? { companyId } : {};
+  async findAll(companyId?: string, ownerId?: string) {
+    const filter: Record<string, unknown> = companyId
+      ? { companyId: new Types.ObjectId(companyId) }
+      : {};
+
+    if (ownerId && companyId) {
+      const ownedVehicleIds = await this.vehicleModel
+        .find({ companyId: new Types.ObjectId(companyId), ownerId: new Types.ObjectId(ownerId) })
+        .distinct('_id');
+      filter.vehicleId = { $in: ownedVehicleIds };
+    }
+
     const items = await this.expenseModel
       .find(filter)
       .populate({
@@ -68,7 +111,13 @@ export class ExpensesService {
     return this.responseService.success('Expense fetched successfully', item);
   }
 
-  async update(id: string, dto: UpdateExpenseDto) {
+  async update(id: string, dto: UpdateExpenseDto, ownerId?: string) {
+    if (ownerId) {
+      await this.assertOwnerExpense(id, ownerId);
+      if (dto.vehicleId) {
+        await this.assertOwnerVehicle(dto.vehicleId, ownerId);
+      }
+    }
     const item = await this.expenseModel.findByIdAndUpdate(id, dto, {
       new: true,
     });
@@ -78,7 +127,10 @@ export class ExpensesService {
     return this.responseService.success('Expense updated successfully', item);
   }
 
-  async remove(id: string) {
+  async remove(id: string, ownerId?: string) {
+    if (ownerId) {
+      await this.assertOwnerExpense(id, ownerId);
+    }
     const item = await this.expenseModel.findByIdAndDelete(id);
     if (!item) {
       throw new NotFoundException('Expense not found');
