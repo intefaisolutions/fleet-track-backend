@@ -23,6 +23,7 @@ import { VerifyResetOtpDto } from '../dto/verify-reset-otp.dto';
 import { SetupSuperAdminDto } from '../dto/setup-super-admin.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { UpdateProfileDto } from '../dto/update-profile.dto';
+import { GoogleLoginDto } from '../dto/google-login.dto';
 import { UserDocument } from '../../users/schemas/user.schema';
 import { MailService } from '../../mail/mail.service';
 import { LicensesService } from '../../licenses/services/licenses.service';
@@ -138,6 +139,74 @@ export class AuthService {
     );
   }
 
+  private async issueSessionForUser(user: UserDocument) {
+    assertUserCanAuthenticate(user.status);
+    await this.assertLicenseAccessForUser(user);
+
+    const tokens = await this.tokenService.generateTokenPair(user);
+
+    await this.usersService.updateRefreshToken(
+      user._id.toString(),
+      tokens.refreshTokenHash,
+    );
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    const licenseNotice = user.companyId
+      ? await this.licensesService.getGracePeriodNoticeForCompany(
+          user.companyId.toString(),
+        )
+      : null;
+
+    return this.responseService.success('Login successful', {
+      ...tokens,
+      user: this.sanitizeUser(user),
+      ...(licenseNotice ? { licenseNotice } : {}),
+    });
+  }
+
+  async loginWithGoogle(dto: GoogleLoginDto) {
+    const clientId = this.configService.get<string>('app.googleClientId');
+    if (!clientId) {
+      throw new BadRequestException(
+        'Google sign-in is not configured on the server (GOOGLE_CLIENT_ID)',
+      );
+    }
+
+    const tokenRes = await fetch(
+      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(dto.idToken)}`,
+    );
+    if (!tokenRes.ok) {
+      throw new UnauthorizedException('Invalid Google token');
+    }
+
+    const payload = (await tokenRes.json()) as {
+      aud?: string;
+      email?: string;
+      email_verified?: string | boolean;
+    };
+
+    if (payload.aud !== clientId) {
+      throw new UnauthorizedException('Google token audience mismatch');
+    }
+
+    const verified =
+      payload.email_verified === true || payload.email_verified === 'true';
+    if (!verified || !payload.email) {
+      throw new UnauthorizedException('Google email is not verified');
+    }
+
+    const user = await this.usersService.findByEmail(normalizeEmail(payload.email));
+    if (!user) {
+      throw new UnauthorizedException(
+        'No FleetTrack account found for this Google email. Register your company or contact your admin.',
+      );
+    }
+
+    return this.issueSessionForUser(user);
+  }
+
   async login(dto: LoginDto) {
     const user = await this.usersService.findByEmail(normalizeEmail(dto.email));
 
@@ -154,24 +223,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    assertUserCanAuthenticate(user.status);
-
-    await this.assertLicenseAccessForUser(user);
-
-    const tokens = await this.tokenService.generateTokenPair(user);
-
-    await this.usersService.updateRefreshToken(
-      user._id.toString(),
-      tokens.refreshTokenHash,
-    );
-
-    user.lastLogin = new Date();
-    await user.save();
-
-    return this.responseService.success('Login successful', {
-      ...tokens,
-      user: this.sanitizeUser(user),
-    });
+    return this.issueSessionForUser(user);
   }
 
   async refresh(dto: RefreshTokenDto) {

@@ -25,6 +25,7 @@ import {
   SetupSuperAdminDto,
   ChangePasswordDto,
   UpdateProfileDto,
+  GoogleLoginDto,
 } from '../dto';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
@@ -61,6 +62,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Login with email and password' })
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Public()
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login with Google ID token (Sign in with Google)' })
+  loginWithGoogle(@Body() dto: GoogleLoginDto) {
+    return this.authService.loginWithGoogle(dto);
   }
 
   @Public()

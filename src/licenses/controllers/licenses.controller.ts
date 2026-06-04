@@ -17,7 +17,9 @@ import { LicenseKeyStatus } from '../../common/enums';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
+import { SupportAdminPermissionsGuard } from '../../guards/support-admin-permissions.guard';
 import { Roles } from '../../decorators/roles.decorator';
+import { SupportAdminPermissions } from '../../decorators/support-admin-permissions.decorator';
 import { ROLES } from '../../constants';
 import { LicensesService } from '../services/licenses.service';
 import { CreateLicenseDto } from '../dto/create-license.dto';
@@ -55,18 +57,20 @@ export class LicensesController {
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get()
-  @Roles(ROLES.SUPER_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN)
+  @SupportAdminPermissions('licenses:read')
   @ApiQuery({ name: 'status', enum: LicenseKeyStatus, required: false })
   findAll(@Query('status') status?: LicenseKeyStatus) {
     return this.licensesService.findAll(status);
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get(':id')
-  @Roles(ROLES.SUPER_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN)
+  @SupportAdminPermissions('licenses:read')
   findOne(@Param('id') id: string) {
     return this.licensesService.findOne(id);
   }

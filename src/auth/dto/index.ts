@@ -7,3 +7,4 @@ export * from './verify-reset-otp.dto';
 export * from './setup-super-admin.dto';
 export * from './change-password.dto';
 export * from './update-profile.dto';
+export * from './google-login.dto';

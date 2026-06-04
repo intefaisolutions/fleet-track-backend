@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { DEFAULT_PLAN_LIMITS } from '../../common/constants/plan-limits.constant';
@@ -22,6 +23,7 @@ import { License, LicenseDocument } from '../schemas/license.schema';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { UpdateLicenseDto } from '../dto/update-license.dto';
 
+/** Default when LICENSE_GRACE_PERIOD_DAYS is unset */
 export const LICENSE_GRACE_PERIOD_DAYS = 7;
 
 @Injectable()
@@ -35,7 +37,37 @@ export class LicensesService {
     private readonly companyModel: Model<CompanyDocument>,
     private readonly responseService: ResponseService,
     private readonly mailService: MailService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private getGracePeriodDays(): number {
+    const configured = this.configService.get<number>('app.licenseGracePeriodDays');
+    if (typeof configured === 'number' && configured >= 0 && Number.isFinite(configured)) {
+      return configured;
+    }
+    return LICENSE_GRACE_PERIOD_DAYS;
+  }
+
+  /** Last moment login is allowed after validUntil (validUntil + N days, end of that day UTC). */
+  getGracePeriodEnd(validUntil: Date): Date {
+    const end = new Date(validUntil);
+    end.setUTCDate(end.getUTCDate() + this.getGracePeriodDays());
+    end.setUTCHours(23, 59, 59, 999);
+    return end;
+  }
+
+  isWithinGracePeriod(validUntil: Date): boolean {
+    const now = new Date();
+    if (now <= validUntil) {
+      return false;
+    }
+    return now <= this.getGracePeriodEnd(validUntil);
+  }
+
+  isPastGracePeriod(validUntil: Date): boolean {
+    const now = new Date();
+    return now > validUntil && now > this.getGracePeriodEnd(validUntil);
+  }
 
   private formatPlanLabel(planType: string) {
     return planType
@@ -53,8 +85,10 @@ export class LicensesService {
       return license;
     }
 
-    const now = new Date();
-    if (license.validUntil < now && license.status === LicenseKeyStatus.ACTIVE) {
+    if (
+      license.status === LicenseKeyStatus.ACTIVE &&
+      this.isPastGracePeriod(license.validUntil)
+    ) {
       const updated = await this.licenseModel.findByIdAndUpdate(
         license._id,
         { status: LicenseKeyStatus.EXPIRED },
@@ -64,12 +98,6 @@ export class LicensesService {
     }
 
     return license;
-  }
-
-  private isWithinGracePeriod(validUntil: Date): boolean {
-    const graceEnd = new Date(validUntil);
-    graceEnd.setDate(graceEnd.getDate() + LICENSE_GRACE_PERIOD_DAYS);
-    return new Date() <= graceEnd;
   }
 
   async validateKeyPublic(licenseKey: string) {
@@ -141,18 +169,41 @@ export class LicensesService {
       );
     }
 
-    if (
-      refreshed.status === LicenseKeyStatus.EXPIRED ||
-      (refreshed.validUntil < new Date() && !this.isWithinGracePeriod(refreshed.validUntil))
-    ) {
+    if (this.isPastGracePeriod(refreshed.validUntil)) {
       throw new ForbiddenException(
-        'Your company license has expired. Please renew to continue.',
+        `Your company license has expired. Login is blocked after the ${this.getGracePeriodDays()}-day grace period. Please renew to continue.`,
       );
     }
+  }
 
-    if (refreshed.validUntil < new Date() && this.isWithinGracePeriod(refreshed.validUntil)) {
-      return;
+  /** Shown on login when validUntil passed but grace still allows access */
+  async getGracePeriodNoticeForCompany(companyId: string) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company?.licenseId) {
+      return null;
     }
+    const license = await this.licenseModel.findById(company.licenseId);
+    if (!license) {
+      return null;
+    }
+    const refreshed = await this.refreshExpiredStatus(license);
+    if (
+      refreshed.status === LicenseKeyStatus.REVOKED ||
+      refreshed.status === LicenseKeyStatus.CANCELLED
+    ) {
+      return null;
+    }
+    if (!this.isWithinGracePeriod(refreshed.validUntil)) {
+      return null;
+    }
+    const graceEndsAt = this.getGracePeriodEnd(refreshed.validUntil);
+    return {
+      inGracePeriod: true,
+      validUntil: refreshed.validUntil.toISOString(),
+      graceEndsAt: graceEndsAt.toISOString(),
+      graceDays: this.getGracePeriodDays(),
+      message: `Your license expired on ${refreshed.validUntil.toLocaleDateString('en-IN')}. You can log in until ${graceEndsAt.toLocaleDateString('en-IN')} (${this.getGracePeriodDays()}-day grace period). Please renew.`,
+    };
   }
 
   private async assertUniqueLicenseContact(contactEmail?: string, contactPhone?: string) {

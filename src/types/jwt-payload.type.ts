@@ -15,6 +15,8 @@ export interface AuthenticatedUser {
   email: string;
   role: Role;
   companyId?: string;
+  /** SUPPORT_ADMIN only — route permission keys from user record */
+  permissions?: string[];
 }
 
 export interface AuthTokens {

@@ -241,6 +241,9 @@ export class PlatformService implements OnModuleInit {
       monthlyTrend,
       previousYearTrend,
       revenueByCompanyAgg,
+      revenueByPlanAgg,
+      paidCompaniesInMonthAgg,
+      pendingCompaniesInMonthAgg,
       planDistribution,
     ] = await Promise.all([
       this.sumVerifiedPayments(monthStart, monthEnd),
@@ -273,6 +276,49 @@ export class PlatformService implements OnModuleInit {
         },
         { $sort: { amount: -1 } },
         { $limit: 20 },
+      ]),
+      this.paymentModel.aggregate([
+        {
+          $match: {
+            verifiedAt: { $gte: monthStart, $lte: monthEnd },
+            status: PaymentVerificationStatus.VERIFIED,
+          },
+        },
+        {
+          $group: {
+            _id: '$planType',
+            amount: { $sum: '$amount' },
+            companyCount: { $addToSet: '$companyId' },
+          },
+        },
+        {
+          $project: {
+            planType: '$_id',
+            amount: 1,
+            companyCount: { $size: '$companyCount' },
+          },
+        },
+        { $sort: { amount: -1 } },
+      ]),
+      this.paymentModel.aggregate([
+        {
+          $match: {
+            verifiedAt: { $gte: monthStart, $lte: monthEnd },
+            status: PaymentVerificationStatus.VERIFIED,
+          },
+        },
+        { $group: { _id: '$companyId' } },
+        { $count: 'total' },
+      ]),
+      this.paymentModel.aggregate([
+        {
+          $match: {
+            status: PaymentVerificationStatus.PENDING,
+            createdAt: { $gte: monthStart, $lte: monthEnd },
+          },
+        },
+        { $group: { _id: '$companyId' } },
+        { $count: 'total' },
       ]),
       this.subscriptionModel.aggregate([
         { $match: { status: SubscriptionStatus.ACTIVE } },
@@ -352,6 +398,15 @@ export class PlatformService implements OnModuleInit {
     }));
     const totalSubscriptions = planDist.reduce((sum, p) => sum + p.count, 0);
 
+    const revenueByPlan = revenueByPlanAgg.map((row) => ({
+      planType: this.formatPlanLabel(String(row.planType ?? 'FREE')),
+      amount: row.amount as number,
+      companyCount: row.companyCount as number,
+    }));
+
+    const paidCompaniesThisMonth = paidCompaniesInMonthAgg[0]?.total ?? 0;
+    const pendingCompaniesThisMonth = pendingCompaniesInMonthAgg[0]?.total ?? 0;
+
     return this.responseService.success('Revenue overview fetched', {
       selectedMonth,
       selectedYear,
@@ -365,6 +420,13 @@ export class PlatformService implements OnModuleInit {
       monthlyTrend,
       previousYearTrend,
       revenueByCompany,
+      revenueByPlan,
+      paymentStatusReport: {
+        paidCount: paidCompaniesThisMonth,
+        pendingCount: pendingCompaniesThisMonth,
+        month: selectedMonth,
+        year: selectedYear,
+      },
       planDistribution: planDist,
       totalSubscriptions,
     });

@@ -4,7 +4,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
+import { SupportAdminPermissionsGuard } from '../../guards/support-admin-permissions.guard';
 import { Roles } from '../../decorators/roles.decorator';
+import { SupportAdminPermissions } from '../../decorators/support-admin-permissions.decorator';
 import { ROLES } from '../../constants';
 import { PlatformService } from '../services/platform.service';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
@@ -25,18 +27,20 @@ export class PlatformController {
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get('pricing-overview')
-  @Roles(ROLES.SUPER_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN)
+  @SupportAdminPermissions('settings:read')
   @ApiOperation({ summary: 'Plans, yearly discount, and subscription stats for pricing UI' })
   pricingOverview() {
     return this.platformService.getPricingOverview();
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get('revenue-overview')
-  @Roles(ROLES.SUPER_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN)
+  @SupportAdminPermissions('payments:read')
   @ApiOperation({ summary: 'Revenue overview — SRS 4.6 (monthly/yearly, by company, plan distribution)' })
   @ApiQuery({ name: 'month', required: false, type: Number })
   @ApiQuery({ name: 'year', required: false, type: Number })
@@ -50,9 +54,10 @@ export class PlatformController {
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get('dashboard')
-  @Roles(ROLES.SUPER_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN)
+  @SupportAdminPermissions('dashboard:read')
   @ApiOperation({ summary: 'Super Admin dashboard — SRS 4.1 (stats, revenue chart, payments, top companies)' })
   superAdminDashboard() {
     return this.platformService.getSuperAdminDashboard();
@@ -85,9 +90,10 @@ export class PlatformController {
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get('payment-settings')
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN, ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  @SupportAdminPermissions('payments:read', 'payments:write')
   getPaymentSettings() {
     return this.platformService.getPaymentSettings();
   }

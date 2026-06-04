@@ -2,13 +2,19 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import { AppUrls } from '../common/utils/app-urls.util';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: Transporter | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  private readonly appUrls: AppUrls;
+
+  constructor(private readonly configService: ConfigService) {
+    this.appUrls = new AppUrls(configService);
+    AppUrls.assertConfigured(configService);
+  }
 
   private isConfigured(): boolean {
     const host = this.configService.get<string>('mail.host');
@@ -53,6 +59,8 @@ export class MailService {
     const fromName = this.configService.get<string>('mail.fromName');
     const from = this.configService.get<string>('mail.from');
     const appName = this.configService.get<string>('app.name') || 'FleetTrack';
+    const forgotUrl = this.appUrls.forgotPassword;
+    const signInUrl = this.appUrls.signIn;
 
     const html = `
       <div style="font-family: Inter, Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
@@ -66,6 +74,8 @@ export class MailService {
         <div style="margin: 24px 0; padding: 16px 24px; background: #f0f9ff; border-radius: 12px; text-align: center;">
           <span style="font-size: 28px; font-weight: 700; letter-spacing: 8px; color: #0284c7;">${otp}</span>
         </div>
+        ${forgotUrl ? `<p style="margin-top: 20px;"><a href="${forgotUrl}" style="color: #00AEEF; font-weight: 600;">Open password reset page</a></p>` : ''}
+        ${signInUrl ? `<p style="color: #94a3b8; font-size: 13px;">Sign in after reset: <a href="${signInUrl}" style="color: #64748b;">${signInUrl}</a></p>` : ''}
         <p style="color: #94a3b8; font-size: 13px;">
           If you did not request this, you can ignore this email.
         </p>
@@ -113,15 +123,18 @@ export class MailService {
     const fromName = this.configService.get<string>('mail.fromName');
     const from = this.configService.get<string>('mail.from');
     const appName = this.configService.get<string>('app.name') || 'FleetTrack';
-    const adminUrl = this.configService.get<string>('app.adminUrl') || 'http://localhost:5173';
-    const normalized = adminUrl.replace(/\/$/, '');
-    const registerPath = normalized.endsWith('/register-company')
-      ? normalized
-      : `${normalized}/register-company`;
-    const phoneParam = details.contactPhone
-      ? `&phone=${encodeURIComponent(details.contactPhone)}`
-      : '';
-    const registerUrl = `${registerPath}?licenseKey=${encodeURIComponent(licenseKey)}&companyName=${encodeURIComponent(details.companyName ?? '')}&email=${encodeURIComponent(to)}${phoneParam}`;
+    const registerUrl = this.appUrls.buildRegisterCompanyUrl({
+      licenseKey,
+      companyName: details.companyName ?? '',
+      email: to,
+      phone: details.contactPhone,
+    });
+
+    if (!this.appUrls.base) {
+      this.logger.warn(
+        'ADMIN_APP_URL is not set — license email register link may be incomplete. Set ADMIN_APP_URL in .env (e.g. https://fleettrackservice.in)',
+      );
+    }
 
     const html = `
       <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">

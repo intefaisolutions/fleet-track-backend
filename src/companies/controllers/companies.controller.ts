@@ -15,7 +15,9 @@ import { CompanyStatus } from '../../common/enums';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 import { RolesGuard } from '../../guards/roles.guard';
+import { SupportAdminPermissionsGuard } from '../../guards/support-admin-permissions.guard';
 import { Roles } from '../../decorators/roles.decorator';
+import { SupportAdminPermissions } from '../../decorators/support-admin-permissions.decorator';
 import { ROLES } from '../../constants';
 import { CompaniesService } from '../services/companies.service';
 import { CreateCompanyDto } from '../dto/create-company.dto';
@@ -53,9 +55,10 @@ export class CompaniesController {
   }
 
   @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
   @Get()
-  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN, ROLES.COMPANY_ADMIN)
+  @SupportAdminPermissions('companies:read')
   @ApiQuery({ name: 'status', enum: CompanyStatus, required: false })
   findAll(@Query('status') status?: CompanyStatus) {
     return this.companiesService.findAll(status);
