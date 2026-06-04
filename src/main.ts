@@ -42,6 +42,7 @@ async function bootstrap() {
     .addTag('Analytics')
     .addTag('Notifications')
     .addTag('Settings')
+    .addTag('Storage')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

@@ -83,13 +83,14 @@ export enum DriverStatus {
   SUSPENDED = 'SUSPENDED',
 }
 
-/** SRS Section 8 — seven expense categories */
+/** SRS Section 8 — categories 8.1–8.7 + Other */
 export enum ExpenseCategory {
   FUEL = 'FUEL',
   SERVICE = 'SERVICE',
+  TOLL = 'TOLL',
+  REPAIR = 'REPAIR',
   INSURANCE = 'INSURANCE',
   PUC = 'PUC',
-  TOLL = 'TOLL',
   CHALLAN = 'CHALLAN',
   OTHER = 'OTHER',
 }

@@ -5,13 +5,14 @@ import appConfig from '../config/app.config';
 import databaseConfig from '../config/database.config';
 import jwtConfig from '../config/jwt.config';
 import mailConfig from '../config/mail.config';
+import supabaseConfig from '../config/supabase.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
-      load: [appConfig, databaseConfig, jwtConfig, mailConfig],
+      load: [appConfig, databaseConfig, jwtConfig, mailConfig, supabaseConfig],
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],

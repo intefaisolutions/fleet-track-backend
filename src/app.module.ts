@@ -19,6 +19,7 @@ import { SettingsModule } from './settings/settings.module';
 import { PlatformModule } from './platform/platform.module';
 import { SocketModule } from './socket/socket.module';
 import { MailModule } from './mail/mail.module';
+import { StorageModule } from './storage/storage.module';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { PermissionsGuard } from './guards/permissions.guard';
@@ -32,6 +33,7 @@ import { TransformInterceptor } from './interceptors/transform.interceptor';
     DatabaseModule,
     ResponseModule,
     MailModule,
+    StorageModule,
     AuthModule,
     CompaniesModule,
     LicensesModule,
