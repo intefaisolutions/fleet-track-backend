@@ -25,6 +25,10 @@ import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
 import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
+import {
+  assertCompanySubAdminPermissions,
+  COMPANY_SUB_ADMIN_ALLOWED_PERMISSIONS,
+} from '../constants/company-sub-admin-permissions.constant';
 
 @Injectable()
 export class CompaniesService {
@@ -202,11 +206,31 @@ export class CompaniesService {
   }
 
   async findOne(id: string) {
-    const item = await this.companyModel.findById(id);
+    const item = await this.companyModel.findById(id).lean();
     if (!item) {
       throw new NotFoundException('Company not found');
     }
-    return this.responseService.success('Company fetched successfully', item);
+
+    const [licenseDetails, subscription] = await Promise.all([
+      this.licensesService.getDetailsForCompany(id),
+      this.subscriptionModel.findOne({ companyId: item._id }).lean(),
+    ]);
+
+    const licenseValidUntil =
+      licenseDetails?.validUntil ??
+      subscription?.currentPeriodEnd ??
+      undefined;
+
+    const enriched = {
+      ...item,
+      licenseKey: licenseDetails?.licenseKey,
+      licenseValidUntil: licenseValidUntil
+        ? new Date(licenseValidUntil).toISOString()
+        : undefined,
+      planType: item.planType ?? licenseDetails?.planType,
+    };
+
+    return this.responseService.success('Company fetched successfully', enriched);
   }
 
   async approve(id: string) {
@@ -369,6 +393,18 @@ export class CompaniesService {
       throw new BadRequestException('Cannot add the primary company email as a sub-admin');
     }
 
+    try {
+      assertCompanySubAdminPermissions(dto.permissions);
+    } catch (err: unknown) {
+      throw new BadRequestException(
+        err instanceof Error ? err.message : 'Invalid sub-admin permissions',
+      );
+    }
+
+    const permissions = dto.permissions.filter((p) =>
+      (COMPANY_SUB_ADMIN_ALLOWED_PERMISSIONS as readonly string[]).includes(p),
+    );
+
     await this.assertEmailAvailableForSubAdmin(email, companyId);
 
     const updated = await this.companyModel.findByIdAndUpdate(
@@ -378,7 +414,7 @@ export class CompaniesService {
           subAdmins: {
             name: dto.name.trim(),
             email,
-            permissions: dto.permissions,
+            permissions,
             status: 'PENDING',
             invitedAt: new Date(),
           },

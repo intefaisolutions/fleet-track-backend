@@ -44,10 +44,18 @@ export class ExpensesController {
   }
 
   @Get()
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.ACCOUNTANT,
+    ROLES.VEHICLE_OWNER,
+  )
   findAll(@CurrentUser() user: AuthenticatedUser) {
     const ownerId =
       user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
-    return this.sService.findAll(user.companyId, ownerId);
+    const allowAllCompanies = user.role === ROLES.SUPER_ADMIN;
+    return this.sService.findAll(user.companyId, ownerId, allowAllCompanies);
   }
 
   @Get(':id')

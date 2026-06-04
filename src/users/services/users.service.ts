@@ -10,6 +10,7 @@ import { UserRole, UserStatus } from '../../common/enums';
 import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util';
 import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
+import { MailService } from '../../mail/mail.service';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { User, UserDocument } from '../schemas/user.schema';
 import { CreateUserDto } from '../dto/create-user.dto';
@@ -28,7 +29,35 @@ export class UsersService {
     private readonly companyModel: Model<CompanyDocument>,
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
+    private readonly mailService: MailService,
   ) {}
+
+  private async maybeSendWelcomeEmail(
+    dto: CreateUserDto,
+    plainPassword: string,
+  ): Promise<boolean | undefined> {
+    if (
+      dto.role !== UserRole.VEHICLE_OWNER &&
+      dto.role !== UserRole.DRIVER
+    ) {
+      return undefined;
+    }
+
+    const company = dto.companyId
+      ? await this.companyModel.findById(dto.companyId).select('name')
+      : null;
+
+    const roleLabel =
+      dto.role === UserRole.VEHICLE_OWNER ? 'Vehicle Owner' : 'Driver';
+
+    return this.mailService.sendAccountWelcomeEmail({
+      to: normalizeEmail(dto.email),
+      fullName: dto.fullName.trim(),
+      password: plainPassword,
+      roleLabel,
+      companyName: company?.name,
+    });
+  }
 
   private async assertCompanyUserLimit(companyId: string, role: UserRole) {
     const company = await this.companyModel.findById(companyId);
@@ -170,7 +199,19 @@ export class UsersService {
       });
 
       const safe = await this.userModel.findById(created._id).select(SAFE_USER_SELECT);
-      return this.responseService.created('User created successfully', safe);
+
+      const welcomeEmailSent =
+        options?.hashPassword === false
+          ? undefined
+          : await this.maybeSendWelcomeEmail(dto, dto.password);
+
+      return this.responseService.created(
+        'User created successfully',
+        safe,
+        welcomeEmailSent === undefined
+          ? undefined
+          : { welcomeEmailSent },
+      );
     } catch (err: unknown) {
       this.handleMongoDuplicate(err);
       throw err;

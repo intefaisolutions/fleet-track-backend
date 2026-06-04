@@ -79,7 +79,11 @@ export class ExpensesService {
     return this.responseService.created('Expense created successfully', created);
   }
 
-  async findAll(companyId?: string, ownerId?: string) {
+  async findAll(companyId?: string, ownerId?: string, allowAllCompanies = false) {
+    if (!companyId && !ownerId && !allowAllCompanies) {
+      throw new BadRequestException('companyId is required to list expenses');
+    }
+
     const filter: Record<string, unknown> = companyId
       ? { companyId: new Types.ObjectId(companyId) }
       : {};

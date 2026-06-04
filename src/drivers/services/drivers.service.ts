@@ -10,6 +10,7 @@ import { DriverStatus, UserRole, UserStatus } from '../../common/enums';
 import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util';
 import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
+import { MailService } from '../../mail/mail.service';
 import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Driver, DriverDocument } from '../schemas/driver.schema';
@@ -27,6 +28,7 @@ export class DriversService {
     private readonly companyModel: Model<CompanyDocument>,
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
+    private readonly mailService: MailService,
   ) {}
 
   private async assertContactUnique(email: string, phone: string) {
@@ -121,10 +123,22 @@ export class DriversService {
         userId: user._id,
       });
 
-      return this.responseService.created('Driver created successfully', {
-        driver,
-        userId: user._id,
+      const welcomeEmailSent = await this.mailService.sendAccountWelcomeEmail({
+        to: email,
+        fullName: dto.fullName.trim(),
+        password: dto.password,
+        roleLabel: 'Driver',
+        companyName: company.name,
       });
+
+      return this.responseService.created(
+        'Driver created successfully',
+        {
+          driver,
+          userId: user._id,
+        },
+        { welcomeEmailSent },
+      );
     } catch (err: unknown) {
       if (user?._id) {
         await this.userModel.findByIdAndDelete(user._id).catch(() => null);

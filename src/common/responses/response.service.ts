@@ -11,7 +11,11 @@ export class ResponseService {
     return { success: false, message, error, data };
   }
 
-  created<T>(message: string, data?: T): ApiResponse<T> {
-    return { success: true, message, data };
+  created<T>(
+    message: string,
+    data?: T,
+    meta?: Record<string, unknown>,
+  ): ApiResponse<T> {
+    return { success: true, message, data, meta };
   }
 }

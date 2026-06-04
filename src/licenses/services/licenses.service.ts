@@ -356,6 +356,36 @@ export class LicensesService {
     });
   }
 
+  /** License key and expiry for company settings / profile display */
+  async getDetailsForCompany(companyId: string) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      return null;
+    }
+
+    let license = company.licenseId
+      ? await this.licenseModel.findById(company.licenseId)
+      : null;
+
+    if (!license) {
+      license = await this.licenseModel.findOne({
+        companyId: new Types.ObjectId(companyId),
+      });
+    }
+
+    if (!license) {
+      return null;
+    }
+
+    const refreshed = await this.refreshExpiredStatus(license);
+    return {
+      licenseKey: refreshed.licenseKey,
+      validUntil: refreshed.validUntil,
+      planType: refreshed.planType,
+      status: refreshed.status,
+    };
+  }
+
   async validateForRegistration(licenseKey: string) {
     const preview = await this.validateKeyPreview(licenseKey);
     if (!preview.valid) {

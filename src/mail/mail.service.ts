@@ -174,4 +174,83 @@ export class MailService {
       throw err;
     }
   }
+
+  /** Login credentials when a company admin creates a vehicle owner or driver. */
+  async sendAccountWelcomeEmail(params: {
+    to: string;
+    fullName: string;
+    password: string;
+    roleLabel: string;
+    companyName?: string;
+  }): Promise<boolean> {
+    const { to, fullName, password, roleLabel, companyName } = params;
+    const enabled = this.configService.get<boolean>('mail.enabled');
+    if (!enabled) {
+      this.logger.warn(
+        `Mail disabled; welcome email for ${to} (${roleLabel}) not sent`,
+      );
+      return false;
+    }
+
+    if (!this.isConfigured()) {
+      this.logger.warn(
+        `SMTP not configured (SMTP_HOST, SMTP_USER, SMTP_PASS); welcome email for ${to} not sent`,
+      );
+      return false;
+    }
+
+    const fromName = this.configService.get<string>('mail.fromName');
+    const from = this.configService.get<string>('mail.from');
+    const appName = this.configService.get<string>('app.name') || 'FleetTrack';
+    const signInUrl = this.appUrls.signIn;
+    const forgotUrl = this.appUrls.forgotPassword;
+
+    const html = `
+      <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
+        <h2 style="color: #0f172a; margin-bottom: 8px;">Your ${appName} account</h2>
+        <p style="color: #475569; line-height: 1.5;">
+          Hi ${fullName},
+        </p>
+        <p style="color: #475569; line-height: 1.5;">
+          ${companyName ? `You have been added to <strong>${companyName}</strong> as a <strong>${roleLabel}</strong>.` : `You have been added as a <strong>${roleLabel}</strong>.`}
+          Use the credentials below to sign in${signInUrl ? ` at <a href="${signInUrl}" style="color: #00AEEF;">${signInUrl}</a>` : ''}.
+        </p>
+        <table style="width: 100%; margin: 20px 0; font-size: 14px; color: #475569; border-collapse: collapse;">
+          <tr><td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><strong>Email</strong></td><td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;">${to}</td></tr>
+          <tr><td style="padding: 8px 0;"><strong>Temporary password</strong></td><td style="padding: 8px 0; font-family: monospace;">${password}</td></tr>
+        </table>
+        <p style="color: #64748b; font-size: 14px; line-height: 1.5;">
+          For security, change your password after your first sign-in${forgotUrl ? ` using <a href="${forgotUrl}" style="color: #00AEEF;">Forgot password</a> if needed` : ''}.
+        </p>
+        ${signInUrl ? `<p style="margin-top: 24px;"><a href="${signInUrl}" style="display: inline-block; background: #00AEEF; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600;">Sign in</a></p>` : ''}
+      </div>
+    `;
+
+    const text = [
+      `Hi ${fullName},`,
+      companyName
+        ? `You were added to ${companyName} as ${roleLabel}.`
+        : `You were added as ${roleLabel}.`,
+      `Email: ${to}`,
+      `Temporary password: ${password}`,
+      signInUrl ? `Sign in: ${signInUrl}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    try {
+      await this.getTransporter().sendMail({
+        from: `"${fromName}" <${from}>`,
+        to,
+        subject: `${appName} — Your ${roleLabel} account`,
+        text,
+        html,
+      });
+      this.logger.log(`Welcome email sent to ${to} (${roleLabel})`);
+      return true;
+    } catch (err) {
+      this.logger.error(`Failed to send welcome email to ${to}`, err);
+      return false;
+    }
+  }
 }

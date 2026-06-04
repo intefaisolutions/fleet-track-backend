@@ -79,13 +79,20 @@ export class ReportsService {
         createdAt: { $gte: startOfMonth },
       }),
       this.expenseModel.aggregate([
+        { $match: expenseFilter },
         {
-          $match: {
-            ...expenseFilter,
-            createdAt: { $gte: startOfMonth },
+          $addFields: {
+            effectiveDate: { $ifNull: ['$expenseDate', '$createdAt'] },
           },
         },
-        { $group: { _id: null, total: { $sum: '$amount' } } },
+        { $match: { effectiveDate: { $gte: startOfMonth } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$amount' },
+            count: { $sum: 1 },
+          },
+        },
       ]),
       this.vehicleModel
         .find({
@@ -140,6 +147,7 @@ export class ReportsService {
     ]);
 
     const expensesThisMonth = expensesThisMonthAgg[0]?.total ?? 0;
+    const expensesCountThisMonth = expensesThisMonthAgg[0]?.count ?? 0;
     const driverEfficiency =
       totalDrivers > 0 ? Math.round((activeDrivers / totalDrivers) * 100) : 0;
     const vehicleGrowthPercent =
@@ -265,6 +273,7 @@ export class ReportsService {
       totalDrivers,
       activeDrivers,
       expensesThisMonth,
+      expensesCountThisMonth,
       driverEfficiency,
       vehicleGrowthPercent,
       subscription: {
