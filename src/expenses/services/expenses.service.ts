@@ -47,6 +47,7 @@ export class ExpensesService {
     companyId?: string,
     recordedBy?: string,
     ownerId?: string,
+    driverId?: string,
   ) {
     if (!companyId) {
       throw new BadRequestException('companyId is required to create an expense');
@@ -67,6 +68,7 @@ export class ExpensesService {
       companyId,
       vehicleId: dto.vehicleId,
       recordedBy,
+      driverId: driverId ? new Types.ObjectId(driverId) : undefined,
       category: dto.category,
       amount: dto.amount,
       description: dto.description,
@@ -105,6 +107,18 @@ export class ExpensesService {
       .populate('recordedBy', 'fullName role')
       .sort({ expenseDate: -1 });
     return this.responseService.success('Expenses fetched successfully', items);
+  }
+
+  async findByDriver(driverId: string, companyId: string) {
+    return this.expenseModel
+      .find({
+        companyId: new Types.ObjectId(companyId),
+        driverId: new Types.ObjectId(driverId),
+        isActive: true,
+      })
+      .populate('vehicleId', 'registrationNumber make modelName')
+      .sort({ expenseDate: -1 })
+      .lean();
   }
 
   async findOne(id: string) {

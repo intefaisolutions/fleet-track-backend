@@ -43,6 +43,7 @@ async function bootstrap() {
     .addTag('Notifications')
     .addTag('Settings')
     .addTag('Storage')
+    .addTag('Driver App')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
