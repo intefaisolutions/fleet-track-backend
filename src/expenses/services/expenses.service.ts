@@ -42,6 +42,12 @@ export class ExpensesService {
     return expense;
   }
 
+  private async ownedVehicleIds(companyId: string, ownerId: string): Promise<Types.ObjectId[]> {
+    return this.vehicleModel
+      .find({ companyId, ownerId })
+      .distinct('_id');
+  }
+
   async create(
     dto: CreateExpenseDto,
     companyId?: string,
@@ -65,9 +71,9 @@ export class ExpensesService {
     }
 
     const created = await this.expenseModel.create({
-      companyId,
-      vehicleId: dto.vehicleId,
-      recordedBy,
+      companyId: new Types.ObjectId(companyId),
+      vehicleId: new Types.ObjectId(dto.vehicleId),
+      recordedBy: recordedBy ? new Types.ObjectId(recordedBy) : undefined,
       driverId: driverId ? new Types.ObjectId(driverId) : undefined,
       category: dto.category,
       amount: dto.amount,
@@ -86,15 +92,20 @@ export class ExpensesService {
       throw new BadRequestException('companyId is required to list expenses');
     }
 
-    const filter: Record<string, unknown> = companyId
-      ? { companyId: new Types.ObjectId(companyId) }
-      : {};
+    const filter: Record<string, unknown> = {
+      isActive: { $ne: false },
+    };
+    if (companyId) {
+      filter.companyId = companyId;
+    }
 
     if (ownerId && companyId) {
-      const ownedVehicleIds = await this.vehicleModel
-        .find({ companyId: new Types.ObjectId(companyId), ownerId: new Types.ObjectId(ownerId) })
-        .distinct('_id');
-      filter.vehicleId = { $in: ownedVehicleIds };
+      const ownedVehicleIds = await this.ownedVehicleIds(companyId, ownerId);
+      if (ownedVehicleIds.length === 0) {
+        return this.responseService.success('Expenses fetched successfully', []);
+      }
+      const idMatches = ownedVehicleIds.flatMap((id) => [id, id.toString()]);
+      filter.vehicleId = { $in: idMatches };
     }
 
     const items = await this.expenseModel

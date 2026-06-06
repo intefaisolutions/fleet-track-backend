@@ -4,7 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import { randomBytes } from 'crypto';
 import { Model } from 'mongoose';
 import {
   CompanyStatus,
@@ -29,6 +31,7 @@ import {
   assertCompanySubAdminPermissions,
   COMPANY_SUB_ADMIN_ALLOWED_PERMISSIONS,
 } from '../constants/company-sub-admin-permissions.constant';
+import { verifyGoogleIdToken } from '../../common/utils/google-id-token.util';
 
 @Injectable()
 export class CompaniesService {
@@ -44,6 +47,7 @@ export class CompaniesService {
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
     private readonly licensesService: LicensesService,
+    private readonly configService: ConfigService,
   ) {}
 
   private async assertContactUnique(
@@ -89,7 +93,36 @@ export class CompaniesService {
     await this.assertContactUnique(email, phone);
 
     const license = await this.licensesService.validateForRegistration(dto.licenseKey);
-    const hashedPassword = await this.passwordService.hash(dto.password);
+
+    let hashedPassword: string;
+    let adminName = dto.adminName.trim();
+
+    if (dto.googleIdToken) {
+      const googleProfile = await verifyGoogleIdToken(
+        dto.googleIdToken,
+        this.configService.get<string>('app.googleClientId'),
+      );
+      if (googleProfile.email !== email) {
+        throw new BadRequestException(
+          'Registration email must match your Google account email',
+        );
+      }
+      if (!adminName && googleProfile.name) {
+        adminName = googleProfile.name.trim();
+      }
+      hashedPassword = await this.passwordService.hash(
+        randomBytes(32).toString('hex'),
+      );
+    } else {
+      if (!dto.password) {
+        throw new BadRequestException('Password is required when not using Google sign-in');
+      }
+      hashedPassword = await this.passwordService.hash(dto.password);
+    }
+
+    if (adminName.length < 2) {
+      throw new BadRequestException('Admin full name is required');
+    }
 
     try {
       const company = await this.companyModel.create({
@@ -106,7 +139,7 @@ export class CompaniesService {
       });
 
       await this.userModel.create({
-        fullName: dto.adminName.trim(),
+        fullName: adminName,
         email,
         phone,
         password: hashedPassword,

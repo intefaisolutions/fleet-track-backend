@@ -11,6 +11,7 @@ import { Roles } from '../../decorators/roles.decorator';
 import { ROLES } from '../../constants';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../types';
+import { resolveVehicleOwnerUserId } from '../../common/utils/vehicle-owner.util';
 import { ReportsService } from '../services/reports.service';
 
 @ApiTags('Reports')
@@ -30,7 +31,7 @@ export class ReportsController {
   )
   @ApiOperation({ summary: 'Fleet dashboard metrics' })
   getDashboard(@CurrentUser() user: AuthenticatedUser) {
-    const ownerId = user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    const ownerId = resolveVehicleOwnerUserId(user.role, user.userId);
     return this.reportsService.getDashboard(user.companyId, ownerId);
   }
 

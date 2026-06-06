@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsEmail, IsOptional, IsString, MinLength, ValidateIf } from 'class-validator';
 import { IsValidPhoneNumber } from '../../common/validators/phone.validator';
 
 export class RegisterCompanyDto {
@@ -27,8 +27,14 @@ export class RegisterCompanyDto {
   @MinLength(2)
   adminName: string;
 
-  @ApiProperty({ example: 'Password@123', minLength: 8 })
+  @ApiPropertyOptional({ example: 'Password@123', minLength: 8 })
+  @ValidateIf((dto: RegisterCompanyDto) => !dto.googleIdToken)
   @IsString()
   @MinLength(8)
-  password: string;
+  password?: string;
+
+  @ApiPropertyOptional({ description: 'Google ID token when registering via Continue with Google' })
+  @IsOptional()
+  @IsString()
+  googleIdToken?: string;
 }

@@ -19,6 +19,7 @@ import { AuthenticatedUser } from '../../types';
 import { ExpensesService } from '../services/expenses.service';
 import { CreateExpenseDto } from '../dto/create-expense.dto';
 import { UpdateExpenseDto } from '../dto/update-expense.dto';
+import { resolveVehicleOwnerUserId } from '../../common/utils/vehicle-owner.util';
 
 @ApiTags('Expenses')
 @ApiBearerAuth()
@@ -38,8 +39,7 @@ export class ExpensesController {
     if (!user.companyId) {
       throw new BadRequestException('companyId is required to create an expense');
     }
-    const ownerId =
-      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    const ownerId = resolveVehicleOwnerUserId(user.role, user.userId);
     return this.sService.create(dto, user.companyId, user.userId, ownerId);
   }
 
@@ -52,8 +52,7 @@ export class ExpensesController {
     ROLES.VEHICLE_OWNER,
   )
   findAll(@CurrentUser() user: AuthenticatedUser) {
-    const ownerId =
-      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    const ownerId = resolveVehicleOwnerUserId(user.role, user.userId);
     const allowAllCompanies = user.role === ROLES.SUPER_ADMIN;
     return this.sService.findAll(user.companyId, ownerId, allowAllCompanies);
   }
@@ -75,16 +74,14 @@ export class ExpensesController {
     @Body() dto: UpdateExpenseDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    const ownerId =
-      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    const ownerId = resolveVehicleOwnerUserId(user.role, user.userId);
     return this.sService.update(id, dto, ownerId);
   }
 
   @Delete(':id')
   @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
   remove(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    const ownerId =
-      user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
+    const ownerId = resolveVehicleOwnerUserId(user.role, user.userId);
     return this.sService.remove(id, ownerId);
   }
 }

@@ -31,23 +31,30 @@ export class ReportsService {
       throw new BadRequestException('companyId is required for company dashboard');
     }
 
-    const companyOid = new Types.ObjectId(companyId);
-    const filter = { companyId: companyOid };
-    const ownerOid = ownerId ? new Types.ObjectId(ownerId) : null;
-    const ownerVehicleFilter = ownerOid ? { ...filter, ownerId: ownerOid } : filter;
+    const filter: Record<string, unknown> = { companyId };
+    const ownerVehicleFilter: Record<string, unknown> = ownerId
+      ? { companyId, ownerId }
+      : filter;
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    const ownedVehicles = ownerOid
+    const ownedVehicles = ownerId
       ? await this.vehicleModel
           .find(ownerVehicleFilter)
           .select('_id registrationNumber make modelName currentOdometerKm createdAt')
           .lean()
       : [];
-    const ownedVehicleIds = ownedVehicles.map((v) => v._id);
-    const expenseFilter = ownerOid
-      ? { ...filter, vehicleId: { $in: ownedVehicleIds } }
-      : filter;
+    const ownedVehicleIds = ownedVehicles.flatMap((v) => {
+      const id = v._id;
+      return [id, id.toString()];
+    });
+    const expenseFilter: Record<string, unknown> = ownerId
+      ? {
+          companyId,
+          vehicleId: { $in: ownedVehicleIds },
+          isActive: { $ne: false },
+        }
+      : { ...filter, isActive: { $ne: false } };
 
     const [
       totalVehicles,
@@ -66,10 +73,10 @@ export class ReportsService {
       ownerMostExpensiveAgg,
     ] = await Promise.all([
       this.vehicleModel.countDocuments(ownerVehicleFilter),
-      ownerOid
-        ? this.userModel.countDocuments({ _id: ownerOid, role: UserRole.VEHICLE_OWNER })
+      ownerId
+        ? this.userModel.countDocuments({ _id: ownerId, role: UserRole.VEHICLE_OWNER })
         : this.userModel.countDocuments({
-            companyId: companyOid,
+            companyId,
             role: UserRole.VEHICLE_OWNER,
           }),
       this.driverModel.countDocuments(filter),
@@ -102,7 +109,7 @@ export class ReportsService {
         .sort({ updatedAt: -1 })
         .limit(3)
         .lean(),
-      this.subscriptionModel.findOne({ companyId: companyOid }).lean(),
+      this.subscriptionModel.findOne({ companyId }).lean(),
       this.companyModel.findById(companyId).lean(),
       this.expenseModel
         .find(expenseFilter)
@@ -110,16 +117,16 @@ export class ReportsService {
         .sort({ createdAt: -1 })
         .limit(6)
         .lean(),
-      ownerOid
+      ownerId
         ? Promise.resolve([])
         : this.vehicleModel.aggregate([
-            { $match: { companyId: companyOid, ownerId: { $exists: true, $ne: null } } },
+            { $match: { companyId, ownerId: { $exists: true, $ne: null } } },
             { $group: { _id: '$ownerId', fleetSize: { $sum: 1 } } },
             { $sort: { fleetSize: -1 } },
             { $limit: 5 },
           ]),
       this.expenseModel.countDocuments(expenseFilter),
-      ownerOid
+      ownerId
         ? this.expenseModel
             .find(expenseFilter)
             .populate('vehicleId', 'registrationNumber')
@@ -127,7 +134,7 @@ export class ReportsService {
             .limit(5)
             .lean()
         : Promise.resolve([]),
-      ownerOid
+      ownerId
         ? this.expenseModel.aggregate([
             { $match: expenseFilter },
             { $group: { _id: '$vehicleId', total: { $sum: '$amount' } } },
@@ -162,7 +169,7 @@ export class ReportsService {
       fleetSize: number;
       fleetPercent: number;
     }> = [];
-    if (!ownerOid) {
+    if (!ownerId) {
       const ownerIds = topOwnersAgg.map((r) => r._id as Types.ObjectId);
       const owners = await this.userModel
         .find({ _id: { $in: ownerIds } })
@@ -221,7 +228,7 @@ export class ReportsService {
       .map((w) => w.charAt(0) + w.slice(1).toLowerCase())
       .join(' ');
 
-    const upcomingServices = ownerOid
+    const upcomingServices = ownerId
       ? ownedVehicles
           .map((v) => {
             const odometer = v.currentOdometerKm ?? 0;
@@ -238,7 +245,7 @@ export class ReportsService {
           .slice(0, 3)
       : [];
 
-    const mostExpensiveVehicle = ownerOid
+    const mostExpensiveVehicle = ownerId
       ? ownerMostExpensiveAgg[0]
         ? {
             registrationNumber:
@@ -251,7 +258,7 @@ export class ReportsService {
         : null
       : null;
 
-    const ownerRecentExpenseRows = ownerOid
+    const ownerRecentExpenseRows = ownerId
       ? ownerRecentExpenses.map((e) => {
           const reg =
             e.vehicleId && typeof e.vehicleId === 'object' && 'registrationNumber' in e.vehicleId
