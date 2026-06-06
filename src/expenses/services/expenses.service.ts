@@ -42,10 +42,39 @@ export class ExpensesService {
     return expense;
   }
 
-  private async ownedVehicleIds(companyId: string, ownerId: string): Promise<Types.ObjectId[]> {
-    return this.vehicleModel
-      .find({ companyId, ownerId })
+  private idVariants(id: string | Types.ObjectId): Array<string | Types.ObjectId> {
+    const str = id.toString();
+    if (!Types.ObjectId.isValid(str)) return [str];
+    return [str, new Types.ObjectId(str)];
+  }
+
+  private async ownedVehicleIds(
+    companyId: string,
+    ownerId: string,
+  ): Promise<Array<string | Types.ObjectId>> {
+    const ids = await this.vehicleModel
+      .find({
+        companyId,
+        ownerId: { $in: this.idVariants(ownerId) },
+        isActive: { $ne: false },
+      })
       .distinct('_id');
+    return ids.flatMap((id) => this.idVariants(id));
+  }
+
+  private async assignedVehicleIds(
+    driverId: string,
+    companyId: string,
+  ): Promise<Array<string | Types.ObjectId>> {
+    const vehicles = await this.vehicleModel
+      .find({
+        companyId,
+        assignedDriverId: { $in: this.idVariants(driverId) },
+        isActive: { $ne: false },
+      })
+      .select('_id')
+      .lean();
+    return vehicles.flatMap((v) => this.idVariants(v._id));
   }
 
   async create(
@@ -71,10 +100,10 @@ export class ExpensesService {
     }
 
     const created = await this.expenseModel.create({
-      companyId: new Types.ObjectId(companyId),
-      vehicleId: new Types.ObjectId(dto.vehicleId),
-      recordedBy: recordedBy ? new Types.ObjectId(recordedBy) : undefined,
-      driverId: driverId ? new Types.ObjectId(driverId) : undefined,
+      companyId,
+      vehicleId: dto.vehicleId,
+      recordedBy: recordedBy ?? undefined,
+      driverId: driverId ?? undefined,
       category: dto.category,
       amount: dto.amount,
       description: dto.description,
@@ -96,7 +125,7 @@ export class ExpensesService {
       isActive: { $ne: false },
     };
     if (companyId) {
-      filter.companyId = companyId;
+      filter.companyId = { $in: this.idVariants(companyId) };
     }
 
     if (ownerId && companyId) {
@@ -104,20 +133,61 @@ export class ExpensesService {
       if (ownedVehicleIds.length === 0) {
         return this.responseService.success('Expenses fetched successfully', []);
       }
-      const idMatches = ownedVehicleIds.flatMap((id) => [id, id.toString()]);
-      filter.vehicleId = { $in: idMatches };
+      filter.vehicleId = { $in: ownedVehicleIds };
     }
 
     const items = await this.expenseModel
       .find(filter)
       .populate({
         path: 'vehicleId',
-        select: 'registrationNumber make modelName ownerId',
+        select: 'registrationNumber make modelName ownerId assignedDriverId',
         populate: { path: 'ownerId', select: 'fullName email' },
       })
       .populate('recordedBy', 'fullName role')
+      .populate('driverId', 'fullName phone')
       .sort({ expenseDate: -1 });
     return this.responseService.success('Expenses fetched successfully', items);
+  }
+
+  /** Expenses on vehicles assigned to this driver (owner-added + driver-added). */
+  async findForAssignedDriver(
+    driverId: string,
+    companyId: string,
+    filters?: {
+      category?: string;
+      fromDate?: Date;
+      toDate?: Date;
+    },
+  ) {
+    const vehicleIds = await this.assignedVehicleIds(driverId, companyId);
+    if (vehicleIds.length === 0) {
+      return this.findByDriver(driverId, companyId, filters);
+    }
+
+    const filter: Record<string, unknown> = {
+      companyId: { $in: this.idVariants(companyId) },
+      vehicleId: { $in: vehicleIds },
+      isActive: { $ne: false },
+    };
+
+    if (filters?.category) {
+      filter.category = filters.category;
+    }
+
+    if (filters?.fromDate || filters?.toDate) {
+      const dateFilter: Record<string, Date> = {};
+      if (filters.fromDate) dateFilter.$gte = filters.fromDate;
+      if (filters.toDate) dateFilter.$lte = filters.toDate;
+      filter.expenseDate = dateFilter;
+    }
+
+    return this.expenseModel
+      .find(filter)
+      .populate('vehicleId', 'registrationNumber make modelName')
+      .populate('recordedBy', 'fullName role')
+      .populate('driverId', 'fullName phone')
+      .sort({ expenseDate: -1 })
+      .lean();
   }
 
   async findByDriver(
@@ -130,8 +200,8 @@ export class ExpensesService {
     },
   ) {
     const filter: Record<string, unknown> = {
-      companyId,
-      driverId: { $in: [driverId, new Types.ObjectId(driverId)] },
+      companyId: { $in: this.idVariants(companyId) },
+      driverId: { $in: this.idVariants(driverId) },
       isActive: { $ne: false },
     };
 

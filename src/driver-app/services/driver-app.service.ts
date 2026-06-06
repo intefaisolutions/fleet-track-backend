@@ -257,6 +257,8 @@ export class DriverAppService {
       receiptUrl: expense.receiptUrl,
       categoryDetails: expense.categoryDetails,
       vehicle: reg,
+      recordedBy: expense.recordedBy,
+      driverId: expense.driverId,
       createdAt: expense.createdAt,
     };
   }
@@ -344,7 +346,7 @@ export class DriverAppService {
       owner,
     );
 
-    const expenses = await this.expensesService.findByDriver(
+    const expenses = await this.expensesService.findForAssignedDriver(
       driver._id.toString(),
       user.companyId!,
     );
@@ -444,14 +446,14 @@ export class DriverAppService {
   }
 
   async getMyExpenses(user: AuthenticatedUser, query?: DriverMyExpensesQueryDto) {
-    const { driver } = await this.resolveDriverContext(user);
+    const driver = await this.findDriverForUser(user);
     const filters = parseExpenseFilters(query);
 
-    const allItems = await this.expensesService.findByDriver(
+    const allItems = await this.expensesService.findForAssignedDriver(
       driver._id.toString(),
       user.companyId!,
     );
-    const filteredItems = await this.expensesService.findByDriver(
+    const filteredItems = await this.expensesService.findForAssignedDriver(
       driver._id.toString(),
       user.companyId!,
       filters,
