@@ -120,13 +120,34 @@ export class ExpensesService {
     return this.responseService.success('Expenses fetched successfully', items);
   }
 
-  async findByDriver(driverId: string, companyId: string) {
+  async findByDriver(
+    driverId: string,
+    companyId: string,
+    filters?: {
+      category?: string;
+      fromDate?: Date;
+      toDate?: Date;
+    },
+  ) {
+    const filter: Record<string, unknown> = {
+      companyId,
+      driverId: { $in: [driverId, new Types.ObjectId(driverId)] },
+      isActive: { $ne: false },
+    };
+
+    if (filters?.category) {
+      filter.category = filters.category;
+    }
+
+    if (filters?.fromDate || filters?.toDate) {
+      const dateFilter: Record<string, Date> = {};
+      if (filters.fromDate) dateFilter.$gte = filters.fromDate;
+      if (filters.toDate) dateFilter.$lte = filters.toDate;
+      filter.expenseDate = dateFilter;
+    }
+
     return this.expenseModel
-      .find({
-        companyId: new Types.ObjectId(companyId),
-        driverId: new Types.ObjectId(driverId),
-        isActive: true,
-      })
+      .find(filter)
       .populate('vehicleId', 'registrationNumber make modelName')
       .sort({ expenseDate: -1 })
       .lean();

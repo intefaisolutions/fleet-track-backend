@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { DriverStatus, UserRole, UserStatus } from '../../common/enums';
 import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util';
 import { ResponseService } from '../../common/responses/response.service';
@@ -77,6 +77,74 @@ export class DriversService {
       throw new ConflictException('Duplicate value found');
     }
     throw err;
+  }
+
+  private idVariants(id: string | Types.ObjectId): Array<string | Types.ObjectId> {
+    const str = id.toString();
+    if (!Types.ObjectId.isValid(str)) return [str];
+    return [str, new Types.ObjectId(str)];
+  }
+
+  /** Links or creates a drivers-collection record for a DRIVER user account. */
+  async ensureProfileForUser(user: UserDocument): Promise<DriverDocument | null> {
+    if (user.role !== UserRole.DRIVER || !user.companyId) {
+      return null;
+    }
+
+    const companyId = user.companyId.toString();
+
+    let driver = await this.driverModel.findOne({
+      userId: { $in: this.idVariants(user._id) },
+    });
+    if (driver) {
+      await this.syncProfileFromUser(user, driver);
+      return driver;
+    }
+
+    driver = await this.driverModel.findOne({
+      companyId,
+      phone: user.phone.trim(),
+    });
+    if (driver) {
+      driver.userId = user._id as Types.ObjectId;
+      driver.fullName = user.fullName.trim();
+      await driver.save();
+      return driver;
+    }
+
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new BadRequestException('Company not found');
+    }
+    const driverCount = await this.driverModel.countDocuments({ companyId });
+    if (driverCount >= company.maxDrivers) {
+      throw new BadRequestException(
+        `Driver limit reached (${company.maxDrivers}). Upgrade your plan.`,
+      );
+    }
+
+    return this.driverModel.create({
+      fullName: user.fullName.trim(),
+      phone: user.phone.trim(),
+      companyId,
+      userId: user._id,
+      status: DriverStatus.ACTIVE,
+    });
+  }
+
+  private async syncProfileFromUser(user: UserDocument, driver: DriverDocument) {
+    const fullName = user.fullName.trim();
+    const phone = user.phone.trim();
+    if (driver.fullName === fullName && driver.phone === phone) return;
+    driver.fullName = fullName;
+    driver.phone = phone;
+    await driver.save();
+  }
+
+  async removeByUserId(userId: string) {
+    await this.driverModel.deleteMany({
+      userId: { $in: this.idVariants(userId) },
+    });
   }
 
   async create(dto: CreateDriverDto, companyId?: string) {

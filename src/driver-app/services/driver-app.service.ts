@@ -11,6 +11,7 @@ import { ResponseService } from '../../common/responses/response.service';
 import { AuthService } from '../../auth/services/auth.service';
 import { LoginDto } from '../../auth/dto/login.dto';
 import { ExpensesService } from '../../expenses/services/expenses.service';
+import { DriversService } from '../../drivers/services/drivers.service';
 import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { User, UserDocument } from '../../users/schemas/user.schema';
@@ -20,6 +21,9 @@ import { DriverAddExpenseDto } from '../dto/driver-add-expense.dto';
 import { DriverRepairRequestDto } from '../dto/driver-repair-request.dto';
 import { DriverDailyReportDto } from '../dto/driver-daily-report.dto';
 import { DriverUpdateProfileDto } from '../dto/driver-update-profile.dto';
+import { DriverServiceAlertDto } from '../dto/driver-service-alert.dto';
+import { DriverMyExpensesQueryDto } from '../dto/driver-my-expenses-query.dto';
+import { ChangePasswordDto } from '../../auth/dto/change-password.dto';
 
 function buildInitials(name: string): string {
   return name
@@ -45,6 +49,73 @@ function formatOdometer(km?: number | null): string | null {
   return `${Math.round(km).toLocaleString('en-IN')} km`;
 }
 
+function idVariants(id: string): Array<string | Types.ObjectId> {
+  if (!Types.ObjectId.isValid(id)) return [id];
+  return [id, new Types.ObjectId(id)];
+}
+
+function parseExpenseFilters(query?: DriverMyExpensesQueryDto) {
+  let fromDate: Date | undefined;
+  let toDate: Date | undefined;
+
+  if (query?.month) {
+    const [year, month] = query.month.split('-').map(Number);
+    fromDate = new Date(year, month - 1, 1);
+    toDate = new Date(year, month, 0, 23, 59, 59, 999);
+  } else {
+    if (query?.fromDate) fromDate = new Date(query.fromDate);
+    if (query?.toDate) {
+      toDate = new Date(query.toDate);
+      toDate.setHours(23, 59, 59, 999);
+    }
+  }
+
+  return {
+    category: query?.category,
+    fromDate,
+    toDate,
+  };
+}
+
+function sumExpenseAmount(expenses: Array<{ amount?: unknown }>) {
+  return expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
+}
+
+function buildTodaySummary(
+  expenses: Array<{ category?: string; amount?: unknown; expenseDate?: Date | string }>,
+  todayStart: Date,
+) {
+  const todayItems = expenses.filter((exp) => {
+    const d = new Date(exp.expenseDate as string);
+    return d >= todayStart;
+  });
+
+  const breakdownMap = new Map<string, number>();
+  for (const exp of todayItems) {
+    const cat = String(exp.category ?? 'OTHER');
+    breakdownMap.set(cat, (breakdownMap.get(cat) ?? 0) + (Number(exp.amount) || 0));
+  }
+
+  const breakdown = [...breakdownMap.entries()].map(([category, amount]) => ({
+    category,
+    amount,
+    label: category.charAt(0) + category.slice(1).toLowerCase(),
+  }));
+
+  const parts = breakdown.map((b) => `${b.label} ₹${Math.round(b.amount).toLocaleString('en-IN')}`);
+  const label =
+    todayItems.length === 0
+      ? 'No expenses recorded today'
+      : `${todayItems.length} expense${todayItems.length > 1 ? 's' : ''}: ${parts.join(' + ')}`;
+
+  return {
+    count: todayItems.length,
+    total: sumExpenseAmount(todayItems),
+    breakdown,
+    label,
+  };
+}
+
 @Injectable()
 export class DriverAppService {
   constructor(
@@ -56,29 +127,65 @@ export class DriverAppService {
     private readonly userModel: Model<UserDocument>,
     private readonly authService: AuthService,
     private readonly expensesService: ExpensesService,
+    private readonly driversService: DriversService,
     private readonly responseService: ResponseService,
   ) {}
 
-  private async resolveDriverContext(user: AuthenticatedUser) {
+  private async findDriverForUser(user: AuthenticatedUser): Promise<DriverDocument> {
     if (!user.companyId) {
       throw new BadRequestException('Driver account is not linked to a company');
     }
 
-    const driver = await this.driverModel.findOne({
-      userId: new Types.ObjectId(user.userId),
-      companyId: new Types.ObjectId(user.companyId),
-      isActive: true,
+    const { userId, companyId } = user;
+
+    let driver = await this.driverModel.findOne({
+      userId: { $in: idVariants(userId) },
+      companyId: { $in: idVariants(companyId) },
+      isActive: { $ne: false },
     });
 
     if (!driver) {
-      throw new NotFoundException('Driver profile not found');
+      driver = await this.driverModel.findOne({
+        userId: { $in: idVariants(userId) },
+        isActive: { $ne: false },
+      });
     }
+
+    if (!driver) {
+      const dbUser = await this.userModel.findById(userId);
+      if (dbUser?.phone) {
+        driver = await this.driverModel.findOne({
+          companyId: { $in: idVariants(companyId) },
+          phone: dbUser.phone.trim(),
+          isActive: { $ne: false },
+        });
+        if (driver && !driver.userId) {
+          driver.userId = dbUser._id as Types.ObjectId;
+          await driver.save();
+        }
+      }
+    }
+
+    if (!driver) {
+      throw new NotFoundException(
+        'Driver profile not found. Ask your company admin to add you from Driver Management.',
+      );
+    }
+
+    return driver;
+  }
+
+  private async findAssignedVehicle(
+    driver: DriverDocument,
+    companyId: string,
+  ): Promise<{ vehicle: VehicleDocument; owner: UserDocument | null }> {
+    const driverIdMatches = [driver._id, driver._id.toString()];
 
     const vehicle = await this.vehicleModel
       .findOne({
-        assignedDriverId: driver._id,
-        companyId: new Types.ObjectId(user.companyId),
-        isActive: true,
+        assignedDriverId: { $in: driverIdMatches },
+        companyId,
+        isActive: { $ne: false },
       })
       .populate('ownerId', 'fullName phone email');
 
@@ -89,7 +196,12 @@ export class DriverAppService {
     }
 
     const owner = vehicle.ownerId as unknown as UserDocument | null;
+    return { vehicle, owner };
+  }
 
+  private async resolveDriverContext(user: AuthenticatedUser) {
+    const driver = await this.findDriverForUser(user);
+    const { vehicle, owner } = await this.findAssignedVehicle(driver, user.companyId!);
     return { driver, vehicle, owner };
   }
 
@@ -102,10 +214,12 @@ export class DriverAppService {
       role?: string;
     },
     driver: DriverDocument,
-    vehicle: VehicleDocument,
+    vehicle: VehicleDocument | null,
     owner: UserDocument | null,
   ) {
-    const vehicleLabel = [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim();
+    const vehicleLabel = vehicle
+      ? [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim()
+      : '';
     return {
       id: String(user.id),
       name: user.fullName ?? driver.fullName,
@@ -117,13 +231,13 @@ export class DriverAppService {
       designation: driver.licenseNumber
         ? `Driver · ${driver.licenseNumber}`
         : 'Fleet Driver',
-      vehicleNo: vehicle.registrationNumber,
-      vehicle: vehicle.registrationNumber,
-      vehicleModel: vehicleLabel || vehicle.modelName,
+      vehicleNo: vehicle?.registrationNumber ?? '',
+      vehicle: vehicle?.registrationNumber ?? '',
+      vehicleModel: vehicleLabel || vehicle?.modelName || '',
       owner: owner?.fullName ?? '—',
       ownerPhone: owner?.phone ?? '',
       driverId: driver._id.toString(),
-      vehicleId: vehicle._id.toString(),
+      vehicleId: vehicle?._id?.toString() ?? '',
     };
   }
 
@@ -165,14 +279,28 @@ export class DriverAppService {
       throw new NotFoundException('User not found');
     }
 
+    await this.driversService.ensureProfileForUser(user);
+
     let driverUser = data.user;
     try {
-      const { driver, vehicle, owner } = await this.resolveDriverContext({
+      const driver = await this.findDriverForUser({
         userId: String(data.user.id),
         email: data.user.email ?? '',
         role: data.user.role,
         companyId: user.companyId?.toString(),
       });
+      let vehicle: VehicleDocument | null = null;
+      let owner: UserDocument | null = null;
+      try {
+        const assigned = await this.findAssignedVehicle(
+          driver,
+          user.companyId!.toString(),
+        );
+        vehicle = assigned.vehicle;
+        owner = assigned.owner;
+      } catch {
+        // Login succeeds even when no vehicle is assigned yet.
+      }
       driverUser = this.mapDriverUser(data.user, driver, vehicle, owner);
     } catch {
       driverUser = {
@@ -225,16 +353,25 @@ export class DriverAppService {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-    let todayExpenses = 0;
-    let monthExpenses = 0;
+    const todayExpenses = sumExpenseAmount(
+      expenses.filter((raw) => {
+        const exp = raw as unknown as { expenseDate: Date };
+        return new Date(exp.expenseDate) >= todayStart;
+      }),
+    );
+    const monthExpenses = sumExpenseAmount(
+      expenses.filter((raw) => {
+        const exp = raw as unknown as { expenseDate: Date };
+        return new Date(exp.expenseDate) >= monthStart;
+      }),
+    );
 
-    for (const raw of expenses) {
-      const exp = raw as unknown as { amount: number; expenseDate: Date };
-      const amt = Number(exp.amount) || 0;
-      const d = new Date(exp.expenseDate);
-      if (d >= todayStart) todayExpenses += amt;
-      if (d >= monthStart) monthExpenses += amt;
-    }
+    const todaySummary = buildTodaySummary(
+      expenses as unknown as Array<{ category?: string; amount?: unknown; expenseDate?: Date | string }>,
+      todayStart,
+    );
+
+    const vehicleLabel = [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim();
 
     const recentExpenses = expenses.slice(0, 5).map((e) =>
       this.mapExpenseItem(e as unknown as Record<string, unknown>),
@@ -242,6 +379,18 @@ export class DriverAppService {
 
     return this.responseService.success('Dashboard fetched successfully', {
       profile,
+      myVehicle: {
+        label: `${vehicleLabel || vehicle.modelName} – ${vehicle.registrationNumber}`,
+        registrationNumber: vehicle.registrationNumber,
+        make: vehicle.make,
+        modelName: vehicle.modelName,
+      },
+      vehicleDetails: {
+        registrationNumber: vehicle.registrationNumber,
+        model: vehicleLabel || vehicle.modelName,
+        ownerName: owner?.fullName ?? '—',
+        label: `${vehicleLabel || vehicle.modelName} | Owner: ${owner?.fullName ?? '—'}`,
+      },
       vehicle: {
         registrationNumber: vehicle.registrationNumber,
         make: vehicle.make,
@@ -251,24 +400,77 @@ export class DriverAppService {
       stats: {
         todayExpenses,
         monthExpenses,
+        monthTotalLabel: `₹${Math.round(monthExpenses).toLocaleString('en-IN')} this month`,
         lastServiceDate: formatDisplayDate(vehicle.lastServiceDate),
+        lastServiceLabel: vehicle.lastServiceDate
+          ? `Last Service: ${formatDisplayDate(vehicle.lastServiceDate)}`
+          : 'Last Service: —',
         odometerKm: vehicle.currentOdometerKm ?? null,
         odometerLabel: formatOdometer(vehicle.currentOdometerKm),
       },
+      todaySummary,
       recentExpenses,
     });
   }
 
-  async getMyExpenses(user: AuthenticatedUser) {
+  async getMyVehicle(user: AuthenticatedUser) {
+    const { vehicle, owner } = await this.resolveDriverContext(user);
+    const vehicleLabel = [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim();
+
+    return this.responseService.success('Vehicle fetched successfully', {
+      label: `${vehicleLabel || vehicle.modelName} – ${vehicle.registrationNumber}`,
+      registrationNumber: vehicle.registrationNumber,
+      make: vehicle.make,
+      modelName: vehicle.modelName,
+      ownerName: owner?.fullName ?? '—',
+      lastServiceDate: formatDisplayDate(vehicle.lastServiceDate),
+      odometerKm: vehicle.currentOdometerKm ?? null,
+      odometerLabel: formatOdometer(vehicle.currentOdometerKm),
+    });
+  }
+
+  async getOwnerDetails(user: AuthenticatedUser) {
+    const { owner } = await this.resolveDriverContext(user);
+    if (!owner) {
+      throw new NotFoundException('Vehicle owner details not found');
+    }
+
+    return this.responseService.success('Owner details fetched successfully', {
+      name: owner.fullName,
+      phone: owner.phone ?? '',
+      email: owner.email ?? '',
+      label: `${owner.fullName} | ${owner.phone ?? '—'}`,
+    });
+  }
+
+  async getMyExpenses(user: AuthenticatedUser, query?: DriverMyExpensesQueryDto) {
     const { driver } = await this.resolveDriverContext(user);
-    const items = await this.expensesService.findByDriver(
+    const filters = parseExpenseFilters(query);
+
+    const allItems = await this.expensesService.findByDriver(
       driver._id.toString(),
       user.companyId!,
     );
-    return this.responseService.success(
-      'Expenses fetched successfully',
-      items.map((e) => this.mapExpenseItem(e as unknown as Record<string, unknown>)),
+    const filteredItems = await this.expensesService.findByDriver(
+      driver._id.toString(),
+      user.companyId!,
+      filters,
     );
+
+    const mapped = filteredItems.map((e) =>
+      this.mapExpenseItem(e as unknown as Record<string, unknown>),
+    );
+
+    return this.responseService.success('Expenses fetched successfully', {
+      items: mapped,
+      summary: {
+        totalCount: allItems.length,
+        totalAmount: sumExpenseAmount(allItems as unknown as Array<{ amount?: unknown }>),
+        filteredCount: filteredItems.length,
+        filteredAmount: sumExpenseAmount(filteredItems as unknown as Array<{ amount?: unknown }>),
+        totalLabel: `Total: ₹${Math.round(sumExpenseAmount(allItems as unknown as Array<{ amount?: unknown }>)).toLocaleString('en-IN')}`,
+      },
+    });
   }
 
   async addExpense(user: AuthenticatedUser, dto: DriverAddExpenseDto) {
@@ -298,6 +500,29 @@ export class DriverAppService {
     );
 
     return created;
+  }
+
+  async serviceAlert(user: AuthenticatedUser, dto: DriverServiceAlertDto) {
+    const { driver, vehicle } = await this.resolveDriverContext(user);
+
+    return this.expensesService.create(
+      {
+        vehicleId: vehicle._id.toString(),
+        category: ExpenseCategory.SERVICE,
+        amount: 0,
+        description: dto.message.trim(),
+        expenseDate: new Date(),
+        categoryDetails: {
+          type: 'SERVICE_ALERT',
+          message: dto.message.trim(),
+          notes: dto.notes?.trim(),
+        },
+      },
+      user.companyId,
+      user.userId,
+      undefined,
+      driver._id.toString(),
+    );
   }
 
   async repairRequest(user: AuthenticatedUser, dto: DriverRepairRequestDto) {
@@ -351,10 +576,23 @@ export class DriverAppService {
   }
 
   async getProfile(user: AuthenticatedUser) {
-    const { driver, vehicle, owner } = await this.resolveDriverContext(user);
     const dbUser = await this.userModel.findById(user.userId);
     if (!dbUser) {
       throw new NotFoundException('User not found');
+    }
+
+    await this.driversService.ensureProfileForUser(dbUser);
+
+    const driver = await this.findDriverForUser(user);
+
+    let vehicle: VehicleDocument | null = null;
+    let owner: UserDocument | null = null;
+    try {
+      const assigned = await this.findAssignedVehicle(driver, user.companyId!);
+      vehicle = assigned.vehicle;
+      owner = assigned.owner;
+    } catch {
+      // Profile can load without an assigned vehicle.
     }
 
     return this.responseService.success(
@@ -384,5 +622,13 @@ export class DriverAppService {
     ]);
 
     return this.getProfile(user);
+  }
+
+  async changePassword(user: AuthenticatedUser, dto: ChangePasswordDto) {
+    return this.authService.changePassword(user.userId, dto);
+  }
+
+  async logout(user: AuthenticatedUser) {
+    return this.authService.logout(user.userId);
   }
 }

@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -12,6 +14,7 @@ import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
 import { MailService } from '../../mail/mail.service';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
+import { DriversService } from '../../drivers/services/drivers.service';
 import { User, UserDocument } from '../schemas/user.schema';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { UpdateUserDto } from '../dto/update-user.dto';
@@ -30,6 +33,8 @@ export class UsersService {
     private readonly responseService: ResponseService,
     private readonly passwordService: PasswordService,
     private readonly mailService: MailService,
+    @Inject(forwardRef(() => DriversService))
+    private readonly driversService: DriversService,
   ) {}
 
   private async maybeSendWelcomeEmail(
@@ -183,6 +188,10 @@ export class UsersService {
       await this.assertCompanyUserLimit(dto.companyId, dto.role);
     }
 
+    if (dto.role === UserRole.DRIVER && !dto.companyId) {
+      throw new BadRequestException('companyId is required for driver accounts');
+    }
+
     const password =
       options?.hashPassword === false
         ? dto.password
@@ -197,6 +206,15 @@ export class UsersService {
         status: options?.status ?? dto.status ?? UserStatus.ACTIVE,
         isEmailVerified: false,
       });
+
+      if (created.role === UserRole.DRIVER) {
+        try {
+          await this.driversService.ensureProfileForUser(created);
+        } catch (err) {
+          await this.userModel.findByIdAndDelete(created._id);
+          throw err;
+        }
+      }
 
       const safe = await this.userModel.findById(created._id).select(SAFE_USER_SELECT);
 
@@ -288,6 +306,11 @@ export class UsersService {
       if (!item) {
         throw new NotFoundException('User not found');
       }
+
+      if (item.role === UserRole.DRIVER) {
+        await this.driversService.ensureProfileForUser(item);
+      }
+
       return this.responseService.success('User updated successfully', item);
     } catch (err: unknown) {
       this.handleMongoDuplicate(err);
@@ -370,10 +393,16 @@ export class UsersService {
   }
 
   async remove(id: string) {
-    const item = await this.userModel.findByIdAndDelete(id);
+    const item = await this.userModel.findById(id);
     if (!item) {
       throw new NotFoundException('User not found');
     }
+
+    if (item.role === UserRole.DRIVER) {
+      await this.driversService.removeByUserId(id);
+    }
+
+    await this.userModel.findByIdAndDelete(id);
     return this.responseService.success('User deleted successfully');
   }
 }
