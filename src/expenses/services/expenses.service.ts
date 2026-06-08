@@ -231,6 +231,40 @@ export class ExpensesService {
     return this.responseService.success('Expense fetched successfully', item);
   }
 
+  async updateForDriver(
+    expenseId: string,
+    driverId: string,
+    companyId: string,
+    dto: { amount?: number; description?: string; expenseDate?: string },
+  ) {
+    const expense = await this.expenseModel.findOne({
+      _id: expenseId,
+      companyId: { $in: this.idVariants(companyId) },
+      driverId: { $in: this.idVariants(driverId) },
+      isActive: { $ne: false },
+    });
+
+    if (!expense) {
+      throw new ForbiddenException('You can only edit expenses that you recorded');
+    }
+
+    const update: Record<string, unknown> = {};
+    if (dto.amount !== undefined) update.amount = dto.amount;
+    if (dto.description !== undefined) update.description = dto.description.trim();
+    if (dto.expenseDate !== undefined) update.expenseDate = new Date(dto.expenseDate);
+
+    if (Object.keys(update).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    const item = await this.expenseModel
+      .findByIdAndUpdate(expenseId, update, { new: true })
+      .populate('vehicleId', 'registrationNumber make modelName')
+      .populate('recordedBy', 'fullName role');
+
+    return this.responseService.success('Expense updated successfully', item);
+  }
+
   async update(id: string, dto: UpdateExpenseDto, ownerId?: string) {
     if (ownerId) {
       await this.assertOwnerExpense(id, ownerId);

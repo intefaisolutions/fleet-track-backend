@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../decorators/public.decorator';
 import { Roles } from '../../decorators/roles.decorator';
@@ -14,6 +14,7 @@ import { DriverDailyReportDto } from '../dto/driver-daily-report.dto';
 import { DriverUpdateProfileDto } from '../dto/driver-update-profile.dto';
 import { DriverServiceAlertDto } from '../dto/driver-service-alert.dto';
 import { DriverMyExpensesQueryDto } from '../dto/driver-my-expenses-query.dto';
+import { DriverUpdateExpenseDto } from '../dto/driver-update-expense.dto';
 
 @ApiTags('Driver App')
 @Controller('driver')
@@ -69,6 +70,18 @@ export class DriverAppController {
     @Query() query: DriverMyExpensesQueryDto,
   ) {
     return this.driverAppService.getMyExpenses(user, query);
+  }
+
+  @ApiBearerAuth()
+  @Roles(ROLES.DRIVER)
+  @Patch('expenses/:id')
+  @ApiOperation({ summary: 'Update an expense recorded by this driver (amount, description, date only)' })
+  updateExpense(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: DriverUpdateExpenseDto,
+  ) {
+    return this.driverAppService.updateExpense(user, id, dto);
   }
 
   @ApiBearerAuth()

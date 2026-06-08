@@ -23,6 +23,7 @@ import { DriverDailyReportDto } from '../dto/driver-daily-report.dto';
 import { DriverUpdateProfileDto } from '../dto/driver-update-profile.dto';
 import { DriverServiceAlertDto } from '../dto/driver-service-alert.dto';
 import { DriverMyExpensesQueryDto } from '../dto/driver-my-expenses-query.dto';
+import { DriverUpdateExpenseDto } from '../dto/driver-update-expense.dto';
 import { ChangePasswordDto } from '../../auth/dto/change-password.dto';
 
 function buildInitials(name: string): string {
@@ -624,6 +625,30 @@ export class DriverAppService {
     ]);
 
     return this.getProfile(user);
+  }
+
+  async updateExpense(
+    user: AuthenticatedUser,
+    expenseId: string,
+    dto: DriverUpdateExpenseDto,
+  ) {
+    const driver = await this.findDriverForUser(user);
+    const result = await this.expensesService.updateForDriver(
+      expenseId,
+      driver._id.toString(),
+      user.companyId!,
+      {
+        amount: dto.amount,
+        description: dto.description,
+        expenseDate: dto.expenseDate,
+      },
+    );
+
+    const data = result.data as unknown as Record<string, unknown>;
+    return this.responseService.success(
+      'Expense updated successfully',
+      this.mapExpenseItem(data),
+    );
   }
 
   async changePassword(user: AuthenticatedUser, dto: ChangePasswordDto) {
