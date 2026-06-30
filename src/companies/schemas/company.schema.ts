@@ -50,6 +50,9 @@ export class Company {
   @Prop({ default: 15 })
   maxDrivers: number;
 
+  @Prop({ default: 0, min: 0 })
+  walletBalance: number;
+
   @Prop({
     type: [
       {

@@ -8,7 +8,7 @@ export default registerAs('jwt', () => ({
   refreshSecret:
     process.env.JWT_REFRESH_SECRET ||
     'change-refresh-secret-in-production',
-  accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+  accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || '24h',
   refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
   resetExpiresIn: process.env.JWT_RESET_EXPIRES_IN || '1h',
 }));

@@ -9,8 +9,26 @@ export class Subscription {
   @Prop({ type: Types.ObjectId, ref: 'Company', required: true, unique: true, index: true })
   companyId: Types.ObjectId;
 
-  @Prop({ type: String, required: true })
-  planType: string;
+  @Prop({ type: Types.ObjectId, ref: 'SubscriptionPlan', required: true })
+  planId: Types.ObjectId;
+
+  @Prop({ required: true, default: 0 })
+  originalPrice: number;
+
+  @Prop({ default: 0 })
+  walletUsed: number;
+
+  @Prop({ default: 0 })
+  amountPaid: number;
+
+  @Prop({ default: 0 })
+  remainingCredit: number;
+
+  @Prop({ default: false })
+  autoRenew: boolean;
+
+  @Prop({ default: null })
+  cancelledAt?: Date;
 
   @Prop({ type: String, enum: SubscriptionStatus, default: SubscriptionStatus.ACTIVE })
   status: SubscriptionStatus;
@@ -18,11 +36,18 @@ export class Subscription {
   @Prop({ type: String, enum: BillingPeriod, default: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;
 
-  @Prop({ required: true })
-  vehicleLimit: number;
+  // Legacy fields to fix TS build errors temporarily during migration
+  @Prop()
+  planType?: string;
+
+  @Prop()
+  vehicleLimit?: number;
 
   @Prop()
   currentPeriodEnd?: Date;
+
+  @Prop()
+  startDate?: Date;
 
   @Prop({ type: Types.ObjectId, ref: 'License' })
   licenseId?: Types.ObjectId;

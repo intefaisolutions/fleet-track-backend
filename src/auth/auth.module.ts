@@ -21,7 +21,7 @@ import { JwtStrategy } from '../guards/jwt.strategy';
         secret: configService.get<string>('jwt.accessSecret'),
         signOptions: {
           expiresIn: (configService.get<string>('jwt.accessExpiresIn') ||
-            '15m') as `${number}${'s' | 'm' | 'h' | 'd'}`,
+            '24h') as `${number}${'s' | 'm' | 'h' | 'd'}`,
         },
       }),
       inject: [ConfigService],

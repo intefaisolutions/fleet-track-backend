@@ -19,9 +19,11 @@ import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util'
 import { generateLicenseKey, normalizeLicenseKey } from '../../common/utils/license-key.util';
 import { ResponseService } from '../../common/responses/response.service';
 import { MailService } from '../../mail/mail.service';
+import { User, UserDocument } from '../../users/schemas/user.schema';
 import { License, LicenseDocument } from '../schemas/license.schema';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { UpdateLicenseDto } from '../dto/update-license.dto';
+import { RevokeLicenseDto } from '../dto/revoke-license.dto';
 
 /** Default when LICENSE_GRACE_PERIOD_DAYS is unset */
 export const LICENSE_GRACE_PERIOD_DAYS = 7;
@@ -35,6 +37,8 @@ export class LicensesService {
     private readonly planModel: Model<SubscriptionPlanDocument>,
     @InjectModel(Company.name)
     private readonly companyModel: Model<CompanyDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly responseService: ResponseService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
@@ -117,7 +121,15 @@ export class LicensesService {
       return { valid: false, message: 'This license has been cancelled' };
     }
     if (refreshed.status === LicenseKeyStatus.REVOKED) {
-      return { valid: false, message: 'This license has been revoked' };
+      if (refreshed.revokedAt && refreshed.revokeGracePeriodHours) {
+        const graceEnd = new Date(refreshed.revokedAt);
+        graceEnd.setHours(graceEnd.getHours() + refreshed.revokeGracePeriodHours);
+        if (new Date() > graceEnd) {
+          return { valid: false, message: 'This license has been revoked and the grace period has ended' };
+        }
+      } else {
+        return { valid: false, message: 'This license has been revoked' };
+      }
     }
     if (refreshed.status !== LicenseKeyStatus.UNUSED) {
       return { valid: false, message: 'This license key has already been used' };
@@ -159,9 +171,19 @@ export class LicensesService {
     const refreshed = await this.refreshExpiredStatus(license);
 
     if (refreshed.status === LicenseKeyStatus.REVOKED) {
-      throw new ForbiddenException(
-        'Your company license has been revoked. Contact FleetTrack support.',
-      );
+      if (refreshed.revokedAt && refreshed.revokeGracePeriodHours) {
+        const graceEnd = new Date(refreshed.revokedAt);
+        graceEnd.setHours(graceEnd.getHours() + refreshed.revokeGracePeriodHours);
+        if (new Date() > graceEnd) {
+          throw new ForbiddenException(
+            'Your company license has been revoked. Contact FleetTrack support.',
+          );
+        }
+      } else {
+        throw new ForbiddenException(
+          'Your company license has been revoked. Contact FleetTrack support.',
+        );
+      }
     }
     if (refreshed.status === LicenseKeyStatus.CANCELLED) {
       throw new ForbiddenException(
@@ -216,9 +238,18 @@ export class LicensesService {
         contactEmail: email,
       });
       if (existingForEmail) {
-        throw new ConflictException(
-          'A license already exists for this contact email. Use a different email or cancel the existing license first.',
-        );
+        throw new ConflictException('Email already exists');
+      }
+
+      const users = await this.userModel.find();
+      const duplicateUserEmail = users.some(u => normalizeEmail(u.email) === email);
+      if (duplicateUserEmail) {
+        throw new ConflictException('Email already exists');
+      }
+
+      const companies = await this.companyModel.find({ email: { $regex: new RegExp('^' + email + '$', 'i') } });
+      if (companies.length > 0) {
+        throw new ConflictException('Email already exists');
       }
     }
 
@@ -232,9 +263,19 @@ export class LicensesService {
         (license) => license.contactPhone && normalizePhone(license.contactPhone) === phoneDigits,
       );
       if (duplicatePhone) {
-        throw new ConflictException(
-          'A license already exists for this contact phone number. Use a different number or cancel the existing license first.',
-        );
+        throw new ConflictException('Phone number already exists');
+      }
+
+      const users = await this.userModel.find();
+      const duplicateUserPhone = users.some(u => normalizePhone(u.phone) === phoneDigits);
+      if (duplicateUserPhone) {
+        throw new ConflictException('Phone number already exists');
+      }
+
+      const companies = await this.companyModel.find({ phone: contactPhone });
+      const duplicateCompanyPhone = companies.some(c => normalizePhone(c.phone) === phoneDigits);
+      if (duplicateCompanyPhone) {
+        throw new ConflictException('Phone number already exists');
       }
     }
   }
@@ -410,10 +451,15 @@ export class LicensesService {
     );
   }
 
-  async revoke(id: string) {
+  async revoke(id: string, dto: RevokeLicenseDto) {
+    const updateData: any = { status: LicenseKeyStatus.REVOKED, revokedAt: new Date() };
+    if (dto.gracePeriodHours !== undefined) {
+      updateData.revokeGracePeriodHours = dto.gracePeriodHours;
+    }
+    
     const item = await this.licenseModel.findByIdAndUpdate(
       id,
-      { status: LicenseKeyStatus.REVOKED, revokedAt: new Date() },
+      updateData,
       { new: true },
     );
     if (!item) throw new NotFoundException('License not found');

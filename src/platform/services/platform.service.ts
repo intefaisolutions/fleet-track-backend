@@ -673,10 +673,10 @@ export class PlatformService implements OnModuleInit {
     });
     for (const u of existingUsers) {
       if (normalizeEmail(u.email) === email) {
-        throw new ConflictException('This email is already used by another account');
+        throw new ConflictException('Email already exists');
       }
       if (normalizePhone(u.phone) === normalizedPhone) {
-        throw new ConflictException('This phone number is already used by another account');
+        throw new ConflictException('Phone number already exists');
       }
     }
 

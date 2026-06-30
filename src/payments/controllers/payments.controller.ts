@@ -29,7 +29,7 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('submit')
-  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  @Roles(ROLES.COMPANY_ADMIN)
   @ApiOperation({ summary: 'Submit manual payment proof (UPI/bank)' })
   submit(@Body() dto: SubmitPaymentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.paymentsService.submit(dto, user.companyId!, user.userId);
@@ -63,5 +63,26 @@ export class PaymentsController {
     @Body('rejectionReason') rejectionReason?: string,
   ) {
     return this.paymentsService.reject(id, user.userId, rejectionReason);
+  }
+
+  @Post('razorpay/create-order')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({ summary: 'Create Razorpay order for plan upgrade' })
+  createRazorpayOrder(
+    @Body() dto: { planType: string; billingPeriod: string },
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    // Note: cast billingPeriod to BillingPeriod enum in service or validate with DTO
+    return this.paymentsService.createRazorpayOrder(dto.planType, dto.billingPeriod as any, user.companyId!);
+  }
+
+  @Post('razorpay/verify')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({ summary: 'Verify Razorpay payment and upgrade plan' })
+  verifyRazorpayPayment(
+    @Body() dto: any, // use VerifyRazorpayPaymentDto if exported
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.paymentsService.verifyRazorpayPayment(dto, user.companyId!, user.userId);
   }
 }

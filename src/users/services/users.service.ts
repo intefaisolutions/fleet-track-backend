@@ -109,10 +109,10 @@ export class UsersService {
 
     for (const u of users) {
       if (normalizeEmail(u.email) === normalizedEmail) {
-        throw new ConflictException('This email is already registered');
+        throw new ConflictException('Email already exists');
       }
       if (normalizePhone(u.phone) === normalizedPhone) {
-        throw new ConflictException('This phone number is already registered');
+        throw new ConflictException('Phone number already exists');
       }
     }
 
@@ -122,10 +122,10 @@ export class UsersService {
 
     for (const c of companies) {
       if (normalizeEmail(c.email) === normalizedEmail) {
-        throw new ConflictException('This email is already used by a company');
+        throw new ConflictException('Email already exists');
       }
       if (normalizePhone(c.phone) === normalizedPhone) {
-        throw new ConflictException('This phone number is already used by a company');
+        throw new ConflictException('Phone number already exists');
       }
     }
   }
@@ -327,10 +327,10 @@ export class UsersService {
     ) {
       const key = (err as { keyPattern?: Record<string, number> }).keyPattern;
       if (key?.email) {
-        throw new ConflictException('This email is already in use');
+        throw new ConflictException('Email already exists');
       }
       if (key?.phone) {
-        throw new ConflictException('This phone number is already in use');
+        throw new ConflictException('Phone number already exists');
       }
       throw new ConflictException('Email or phone already exists');
     }

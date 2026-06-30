@@ -29,7 +29,7 @@ export class TokenService {
 
     const accessSecret = this.configService.get<string>('jwt.accessSecret')!;
     const refreshSecret = this.configService.get<string>('jwt.refreshSecret')!;
-    const accessExpiresIn = this.configService.get<string>('jwt.accessExpiresIn') || '15m';
+    const accessExpiresIn = this.configService.get<string>('jwt.accessExpiresIn') || '24h';
     const refreshExpiresIn = this.configService.get<string>('jwt.refreshExpiresIn') || '7d';
 
     const [accessToken, refreshToken] = await Promise.all([

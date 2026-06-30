@@ -253,4 +253,74 @@ export class MailService {
       return false;
     }
   }
+
+  /** Notification when a company is suspended */
+  async sendCompanySuspensionEmail(
+    to: string,
+    companyName: string,
+    reason: string,
+    validity?: string,
+  ): Promise<boolean> {
+    const enabled = this.configService.get<boolean>('mail.enabled');
+    if (!enabled || !this.isConfigured()) {
+      this.logger.warn(
+        `Mail disabled or SMTP not configured; suspension email for ${to} not sent`,
+      );
+      return false;
+    }
+
+    const fromName = this.configService.get<string>('mail.fromName');
+    const from = this.configService.get<string>('mail.from');
+    const appName = this.configService.get<string>('app.name') || 'FleetTrack';
+
+    const html = `
+      <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
+        <h2 style="color: #dc2626; margin-bottom: 8px;">Account Suspended</h2>
+        <p style="color: #475569; line-height: 1.5;">
+          Dear <strong>${companyName}</strong>,
+        </p>
+        <p style="color: #475569; line-height: 1.5;">
+          Your ${appName} account has been suspended by the administration.
+        </p>
+        <div style="margin: 20px 0; padding: 16px; background: #fee2e2; border-left: 4px solid #ef4444; border-radius: 4px;">
+          <p style="margin: 0 0 8px; font-weight: 600; color: #991b1b;">Reason for Suspension:</p>
+          <p style="margin: 0; color: #7f1d1d;">${reason}</p>
+        </div>
+        ${validity ? `
+        <table style="width: 100%; margin: 20px 0; font-size: 14px; color: #475569; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><strong>License Validity</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;">${validity}</td>
+          </tr>
+        </table>
+        ` : ''}
+        <p style="color: #64748b; font-size: 14px; line-height: 1.5;">
+          If you believe this is an error or wish to appeal this decision, please contact our support team.
+        </p>
+      </div>
+    `;
+
+    const text = [
+      `Dear ${companyName},`,
+      `Your ${appName} account has been suspended.`,
+      `Reason: ${reason}`,
+      validity ? `License Validity: ${validity}` : '',
+      `Please contact support for further assistance.`
+    ].filter(Boolean).join('\n');
+
+    try {
+      await this.getTransporter().sendMail({
+        from: `"${fromName}" <${from}>`,
+        to,
+        subject: `${appName} — Account Suspended`,
+        text,
+        html,
+      });
+      this.logger.log(`Suspension email sent to ${to}`);
+      return true;
+    } catch (err) {
+      this.logger.error(`Failed to send suspension email to ${to}`, err);
+      return false;
+    }
+  }
 }

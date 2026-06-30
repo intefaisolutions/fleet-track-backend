@@ -18,6 +18,7 @@ import { AuthenticatedUser } from '../../types';
 import { SubscriptionsService } from '../services/subscriptions.service';
 import { CreateSubscriptionDto } from '../dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from '../dto/update-subscription.dto';
+import { PlanChangeDto } from '../dto/plan-change.dto';
 
 @ApiTags('Subscriptions')
 @ApiBearerAuth()
@@ -52,5 +53,23 @@ export class SubscriptionsController {
   @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
   remove(@Param('id') id: string) {
     return this.sService.remove(id);
+  }
+
+  @Post('preview-change')
+  @Roles(ROLES.COMPANY_ADMIN)
+  previewChange(@Body() dto: PlanChangeDto, @CurrentUser() user: AuthenticatedUser) {
+    if (!user.companyId) {
+      throw new Error('User does not belong to a company');
+    }
+    return this.sService.previewPlanChange(user.companyId, dto.newPlanId);
+  }
+
+  @Post('change-plan')
+  @Roles(ROLES.COMPANY_ADMIN)
+  changePlan(@Body() dto: PlanChangeDto, @CurrentUser() user: AuthenticatedUser) {
+    if (!user.companyId) {
+      throw new Error('User does not belong to a company');
+    }
+    return this.sService.changePlan(user.companyId, dto.newPlanId, dto.paymentId);
   }
 }

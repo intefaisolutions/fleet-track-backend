@@ -53,6 +53,9 @@ export class License {
   @Prop()
   revokedAt?: Date;
 
+  @Prop()
+  revokeGracePeriodHours?: number;
+
   @Prop({ trim: true })
   notes?: string;
 }

@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as crypto from 'crypto';
+import Razorpay from 'razorpay';
 import {
   BillingPeriod,
   PaymentVerificationStatus,
@@ -35,6 +37,13 @@ export class PaymentsService {
     private readonly planModel: Model<SubscriptionPlanDocument>,
     private readonly responseService: ResponseService,
   ) {}
+
+  private get razorpayInstance() {
+    return new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID || '',
+      key_secret: process.env.RAZORPAY_KEY_SECRET || '',
+    });
+  }
 
   private async resolvePlanLimits(planType: string) {
     const normalized = planType.toUpperCase().trim();
@@ -98,7 +107,7 @@ export class PaymentsService {
     payment.verifiedAt = new Date();
     await payment.save();
 
-    const limits = await this.resolvePlanLimits(payment.planType);
+    const limits = await this.resolvePlanLimits(payment.planType || '');
     await this.companyModel.findByIdAndUpdate(payment.companyId, {
       planType: payment.planType,
       vehicleLimit: limits.vehicleLimit,
@@ -142,5 +151,92 @@ export class PaymentsService {
     );
     if (!payment) throw new NotFoundException('Payment not found');
     return this.responseService.success('Payment rejected', payment);
+  }
+
+  async createRazorpayOrder(planType: string, billingPeriod: BillingPeriod, companyId: string) {
+    const normalized = planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
+    if (!plan) throw new BadRequestException(`Plan "${normalized}" not found or inactive`);
+
+    const amountInr = billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
+    if (!amountInr || amountInr <= 0) {
+      throw new BadRequestException('Plan is free or price is not set');
+    }
+
+    const options = {
+      amount: amountInr * 100, // Razorpay amount is in paise
+      currency: 'INR',
+      receipt: `rcptid_${companyId}_${Date.now()}`,
+    };
+
+    const order = await this.razorpayInstance.orders.create(options);
+    return this.responseService.success('Razorpay order created', {
+      orderId: order.id,
+      amount: order.amount,
+      currency: order.currency,
+    });
+  }
+
+  async verifyRazorpayPayment(dto: any, companyId: string, userId: string) {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planType, billingPeriod } = dto;
+    
+    const body = razorpay_order_id + '|' + razorpay_payment_id;
+    const expectedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+      .update(body.toString())
+      .digest('hex');
+
+    if (expectedSignature !== razorpay_signature) {
+      throw new BadRequestException('Invalid signature');
+    }
+
+    // Determine amount to save in payment record
+    const normalized = planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
+    const amountInr = plan ? (billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr) : 0;
+
+    // Payment is valid, let's create a payment record
+    const created = await this.paymentModel.create({
+      companyId,
+      submittedBy: userId,
+      status: PaymentVerificationStatus.VERIFIED, // auto verify
+      planType: normalized,
+      billingPeriod,
+      amount: amountInr || 0,
+      transactionId: razorpay_payment_id,
+      verifiedBy: userId,
+      verifiedAt: new Date(),
+      notes: 'Paid via Razorpay',
+    });
+
+    const limits = await this.resolvePlanLimits(normalized);
+    await this.companyModel.findByIdAndUpdate(companyId, {
+      planType: normalized,
+      vehicleLimit: limits.vehicleLimit,
+      maxAdmins: limits.maxAdmins,
+      maxOwners: limits.maxOwners,
+      maxDrivers: limits.maxDrivers,
+    });
+
+    const periodEnd = new Date();
+    if (billingPeriod === BillingPeriod.YEARLY) {
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    } else {
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+
+    await this.subscriptionModel.findOneAndUpdate(
+      { companyId },
+      {
+        planType: normalized,
+        status: SubscriptionStatus.ACTIVE,
+        vehicleLimit: limits.vehicleLimit,
+        billingPeriod: billingPeriod,
+        currentPeriodEnd: periodEnd,
+      },
+      { upsert: true },
+    );
+
+    return this.responseService.success('Payment successful and plan upgraded', created);
   }
 }

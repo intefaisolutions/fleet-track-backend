@@ -19,13 +19,15 @@ import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util'
 import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
 import { LicensesService } from '../../licenses/services/licenses.service';
-import { User, UserDocument } from '../../users/schemas/user.schema';
+import { MailService } from '../../mail/mail.service';
+import { User, UserSchema, UserDocument } from '../../users/schemas/user.schema';
 import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { Company, CompanyDocument } from '../schemas/company.schema';
 import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
+import { SuspendCompanyDto } from '../dto/suspend-company.dto';
 import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
 import {
   assertCompanySubAdminPermissions,
@@ -48,6 +50,7 @@ export class CompaniesService {
     private readonly passwordService: PasswordService,
     private readonly licensesService: LicensesService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   private async assertContactUnique(
@@ -65,10 +68,10 @@ export class CompaniesService {
 
     for (const c of companies) {
       if (normalizeEmail(c.email) === normalizedEmail) {
-        throw new ConflictException('This email is already registered with another company');
+        throw new ConflictException('Email already exists');
       }
       if (normalizePhone(c.phone) === normalizedPhone) {
-        throw new ConflictException('This phone number is already registered with another company');
+        throw new ConflictException('Phone number already exists');
       }
     }
 
@@ -78,10 +81,10 @@ export class CompaniesService {
 
     for (const u of users) {
       if (normalizeEmail(u.email) === normalizedEmail) {
-        throw new ConflictException('This email is already used by another user account');
+        throw new ConflictException('Email already exists');
       }
       if (normalizePhone(u.phone) === normalizedPhone) {
-        throw new ConflictException('This phone number is already used by another user account');
+        throw new ConflictException('Phone number already exists');
       }
     }
   }
@@ -306,7 +309,7 @@ export class CompaniesService {
     return this.responseService.success('Company rejected', company);
   }
 
-  async suspend(id: string) {
+  async suspend(id: string, dto: SuspendCompanyDto) {
     const company = await this.companyModel.findById(id);
     if (!company) {
       throw new NotFoundException('Company not found');
@@ -321,6 +324,26 @@ export class CompaniesService {
     await this.userModel.updateMany(
       { companyId: company._id },
       { status: UserStatus.SUSPENDED },
+    );
+
+    // Retrieve subscription or license valid until
+    const subscription = await this.subscriptionModel.findOne({ companyId: company._id }).lean();
+    let validityStr = undefined;
+    if (subscription?.currentPeriodEnd) {
+      validityStr = new Date(subscription.currentPeriodEnd).toISOString().split('T')[0];
+    } else {
+      const license = await this.licensesService.getDetailsForCompany(id);
+      if (license?.validUntil) {
+        validityStr = new Date(license.validUntil).toISOString().split('T')[0];
+      }
+    }
+
+    // Send email to company primary email
+    await this.mailService.sendCompanySuspensionEmail(
+      company.email,
+      company.name,
+      dto.reason,
+      validityStr,
     );
 
     return this.responseService.success('Company suspended', company);
@@ -509,12 +532,12 @@ export class CompaniesService {
       email: normalizedEmail,
     });
     if (otherCompany) {
-      throw new ConflictException('This email is already registered with another company');
+      throw new ConflictException('Email already exists');
     }
 
     const user = await this.userModel.findOne({ email: normalizedEmail });
     if (user) {
-      throw new ConflictException('This email is already used by another user account');
+      throw new ConflictException('Email already exists');
     }
   }
 
@@ -527,10 +550,10 @@ export class CompaniesService {
     ) {
       const key = (err as { keyPattern?: Record<string, number> }).keyPattern;
       if (key?.email) {
-        throw new ConflictException('This email is already in use');
+        throw new ConflictException('Email already exists');
       }
       if (key?.phone) {
-        throw new ConflictException('This phone number is already in use');
+        throw new ConflictException('Phone number already exists');
       }
       throw new ConflictException('Email or phone already exists');
     }

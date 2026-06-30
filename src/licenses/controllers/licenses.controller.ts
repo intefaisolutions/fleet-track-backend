@@ -24,6 +24,7 @@ import { ROLES } from '../../constants';
 import { LicensesService } from '../services/licenses.service';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { UpdateLicenseDto } from '../dto/update-license.dto';
+import { RevokeLicenseDto } from '../dto/revoke-license.dto';
 
 class ExtendLicenseDto {
   @Type(() => Date)
@@ -79,8 +80,8 @@ export class LicensesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(':id/revoke')
   @Roles(ROLES.SUPER_ADMIN)
-  revoke(@Param('id') id: string) {
-    return this.licensesService.revoke(id);
+  revoke(@Param('id') id: string, @Body() dto: RevokeLicenseDto) {
+    return this.licensesService.revoke(id, dto);
   }
 
   @ApiBearerAuth()

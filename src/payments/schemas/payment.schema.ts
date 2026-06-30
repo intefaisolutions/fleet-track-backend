@@ -16,14 +16,33 @@ export class Payment {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   submittedBy: Types.ObjectId;
 
-  @Prop({ type: String, required: true })
-  planType: string;
+  @Prop({ type: Types.ObjectId, ref: 'SubscriptionPlan' })
+  planId?: Types.ObjectId;
+
+  // Legacy field
+  @Prop()
+  planType?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'Subscription' })
+  subscriptionId?: Types.ObjectId;
 
   @Prop({ type: String, enum: BillingPeriod, default: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;
 
   @Prop({ required: true, min: 0 })
   amount: number;
+
+  @Prop({ default: 0, min: 0 })
+  walletUsed: number;
+
+  @Prop({ trim: true, default: 'INR' })
+  currency: string;
+
+  @Prop({ trim: true })
+  paymentGateway?: string;
+
+  @Prop({ trim: true })
+  invoiceNo?: string;
 
   @Prop({ required: true, trim: true })
   transactionId: string;

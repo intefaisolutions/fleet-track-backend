@@ -24,6 +24,7 @@ import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
 import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
+import { SuspendCompanyDto } from '../dto/suspend-company.dto';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../types';
 
@@ -127,8 +128,8 @@ export class CompaniesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch(':id/suspend')
   @Roles(ROLES.SUPER_ADMIN)
-  suspend(@Param('id') id: string) {
-    return this.companiesService.suspend(id);
+  suspend(@Param('id') id: string, @Body() dto: SuspendCompanyDto) {
+    return this.companiesService.suspend(id, dto);
   }
 
   @ApiBearerAuth()

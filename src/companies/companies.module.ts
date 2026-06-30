@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
 import { LicensesModule } from '../licenses/licenses.module';
+import { MailModule } from '../mail/mail.module';
 import { Subscription, SubscriptionSchema } from '../subscriptions/schemas/subscription.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Vehicle, VehicleSchema } from '../vehicles/schemas/vehicle.schema';
@@ -13,6 +14,7 @@ import { CompaniesService } from './services/companies.service';
   imports: [
     AuthModule,
     LicensesModule,
+    MailModule,
     MongooseModule.forFeature([
       { name: Company.name, schema: CompanySchema },
       { name: User.name, schema: UserSchema },

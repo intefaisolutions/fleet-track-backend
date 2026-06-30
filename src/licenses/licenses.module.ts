@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Company, CompanySchema } from '../companies/schemas/company.schema';
+import { User, UserSchema } from '../users/schemas/user.schema';
 import { License, LicenseSchema } from './schemas/license.schema';
 import {
   SubscriptionPlan,
@@ -15,6 +16,7 @@ import { LicensesService } from './services/licenses.service';
       { name: License.name, schema: LicenseSchema },
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
       { name: Company.name, schema: CompanySchema },
+      { name: User.name, schema: UserSchema },
     ]),
   ],
   controllers: [LicensesController],

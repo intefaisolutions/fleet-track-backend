@@ -28,6 +28,7 @@ import { SupportAdminPermissionsGuard } from './guards/support-admin-permissions
 import { AllExceptionsFilter } from './filters/all-exceptions.filter';
 import { LoggingInterceptor } from './interceptors/logging.interceptor';
 import { TransformInterceptor } from './interceptors/transform.interceptor';
+import { WalletsModule } from './wallets/wallets.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { TransformInterceptor } from './interceptors/transform.interceptor';
     PlatformModule,
     SettingsModule,
     SocketModule,
+    WalletsModule,
   ],
   controllers: [HealthController],
   providers: [
