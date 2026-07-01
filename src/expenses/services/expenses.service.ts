@@ -258,7 +258,7 @@ export class ExpensesService {
     }
 
     const item = await this.expenseModel
-      .findByIdAndUpdate(expenseId, update, { new: true })
+      .findByIdAndUpdate(expenseId, update, { returnDocument: 'after' })
       .populate('vehicleId', 'registrationNumber make modelName')
       .populate('recordedBy', 'fullName role');
 
@@ -273,7 +273,7 @@ export class ExpensesService {
       }
     }
     const item = await this.expenseModel.findByIdAndUpdate(id, dto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!item) {
       throw new NotFoundException('Expense not found');

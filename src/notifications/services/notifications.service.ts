@@ -38,7 +38,7 @@ export class NotificationsService {
 
   async update(id: string, dto: UpdateNotificationDto) {
     const item = await this.Model.findByIdAndUpdate(id, dto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!item) {
       throw new NotFoundException('Notification not found');

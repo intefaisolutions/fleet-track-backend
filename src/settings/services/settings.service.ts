@@ -38,7 +38,7 @@ export class SettingsService {
 
   async update(id: string, dto: UpdateSettingDto) {
     const item = await this.Model.findByIdAndUpdate(id, dto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!item) {
       throw new NotFoundException('Setting not found');

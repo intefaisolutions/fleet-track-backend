@@ -96,7 +96,7 @@ export class LicensesService {
       const updated = await this.licenseModel.findByIdAndUpdate(
         license._id,
         { status: LicenseKeyStatus.EXPIRED },
-        { new: true },
+        { returnDocument: 'after' },
       );
       return updated ?? license;
     }
@@ -447,7 +447,7 @@ export class LicensesService {
         status: LicenseKeyStatus.ACTIVE,
         usedAt: new Date(),
       },
-      { new: true },
+      { returnDocument: 'after' },
     );
   }
 
@@ -460,7 +460,7 @@ export class LicensesService {
     const item = await this.licenseModel.findByIdAndUpdate(
       id,
       updateData,
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!item) throw new NotFoundException('License not found');
     return this.responseService.success('License revoked successfully', item);
@@ -478,7 +478,7 @@ export class LicensesService {
     const item = await this.licenseModel.findByIdAndUpdate(
       id,
       { validUntil, status: nextStatus },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     return this.responseService.success('License extended successfully', item);
@@ -488,14 +488,14 @@ export class LicensesService {
     const item = await this.licenseModel.findByIdAndUpdate(
       id,
       { status: LicenseKeyStatus.CANCELLED },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!item) throw new NotFoundException('License not found');
     return this.responseService.success('License cancelled successfully', item);
   }
 
   async update(id: string, dto: UpdateLicenseDto) {
-    const item = await this.licenseModel.findByIdAndUpdate(id, dto, { new: true });
+    const item = await this.licenseModel.findByIdAndUpdate(id, dto, { returnDocument: 'after' });
     if (!item) throw new NotFoundException('License not found');
     return this.responseService.success('License updated successfully', item);
   }

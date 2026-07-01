@@ -231,7 +231,7 @@ export class DriversService {
 
   async update(id: string, dto: UpdateDriverDto) {
     const item = await this.driverModel.findByIdAndUpdate(id, dto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!item) {
       throw new NotFoundException('Driver not found');

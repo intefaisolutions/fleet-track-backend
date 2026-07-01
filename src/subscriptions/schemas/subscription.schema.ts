@@ -9,8 +9,8 @@ export class Subscription {
   @Prop({ type: Types.ObjectId, ref: 'Company', required: true, unique: true, index: true })
   companyId: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'SubscriptionPlan', required: true })
-  planId: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'SubscriptionPlan', required: false })
+  planId?: Types.ObjectId;
 
   @Prop({ required: true, default: 0 })
   originalPrice: number;

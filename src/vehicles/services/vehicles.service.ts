@@ -130,7 +130,7 @@ export class VehiclesService {
     if (ownerId) {
       await this.assertOwnerVehicle(id, ownerId);
     }
-    const item = await this.vehicleModel.findByIdAndUpdate(id, dto, { new: true });
+    const item = await this.vehicleModel.findByIdAndUpdate(id, dto, { returnDocument: 'after' });
     if (!item) {
       throw new NotFoundException('Vehicle not found');
     }
@@ -144,7 +144,7 @@ export class VehiclesService {
     const item = await this.vehicleModel.findByIdAndUpdate(
       id,
       { assignedDriverId: dto.driverId },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!item) {
       throw new NotFoundException('Vehicle not found');

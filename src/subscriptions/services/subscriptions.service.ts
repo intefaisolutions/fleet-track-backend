@@ -184,7 +184,7 @@ export class SubscriptionsService {
 
   async update(id: string, dto: UpdateSubscriptionDto) {
     const item = await this.subModel.findByIdAndUpdate(id, dto, {
-      new: true,
+      returnDocument: 'after',
     });
     if (!item) {
       throw new NotFoundException('Subscription not found');

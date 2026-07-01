@@ -7,7 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import {
   CompanyStatus,
   SubscriptionPlanType,
@@ -63,7 +63,7 @@ export class CompaniesService {
 
     const companies = await this.companyModel.find({
       ...(excludeCompanyId ? { _id: { $ne: excludeCompanyId } } : {}),
-      $or: [{ email: normalizedEmail }, { phone }],
+      $or: [{ email: normalizedEmail }, { phone: normalizedPhone }],
     });
 
     for (const c of companies) {
@@ -76,10 +76,17 @@ export class CompaniesService {
     }
 
     const users = await this.userModel.find({
-      $or: [{ email: normalizedEmail }, { phone }],
+      $or: [{ email: normalizedEmail }, { phone: normalizedPhone }],
     });
 
     for (const u of users) {
+      if (
+        excludeCompanyId &&
+        u.companyId?.toString() === excludeCompanyId &&
+        u.role === UserRole.COMPANY_ADMIN
+      ) {
+        continue;
+      }
       if (normalizeEmail(u.email) === normalizedEmail) {
         throw new ConflictException('Email already exists');
       }
@@ -386,7 +393,7 @@ export class CompaniesService {
       const item = await this.companyModel.findByIdAndUpdate(
         id,
         { ...dto, ...(dto.email ? { email } : {}), ...(dto.phone ? { phone } : {}) },
-        { new: true },
+        { returnDocument: 'after' },
       );
       return this.responseService.success('Company updated successfully', item);
     } catch (err: unknown) {
@@ -400,6 +407,24 @@ export class CompaniesService {
     if (!item) {
       throw new NotFoundException('Company not found');
     }
+
+    const objectId = new Types.ObjectId(id);
+
+    try {
+      await Promise.all([
+        this.companyModel.db.collection('users').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('subscriptions').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('vehicles').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('payments').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('drivers').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('expenses').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('wallets').deleteMany({ companyId: objectId }),
+        this.companyModel.db.collection('wallettransactions').deleteMany({ companyId: objectId }),
+      ]);
+    } catch (err) {
+      // Ignore cascading errors
+    }
+
     return this.responseService.success('Company deleted successfully');
   }
 
@@ -463,6 +488,22 @@ export class CompaniesService {
 
     await this.assertEmailAvailableForSubAdmin(email, companyId);
 
+    const rawPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4);
+    const hashedPassword = await this.passwordService.hash(rawPassword);
+    const fakePhone = `SUB-${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+
+    await this.userModel.create({
+      fullName: dto.name.trim(),
+      email,
+      phone: fakePhone,
+      password: hashedPassword,
+      role: UserRole.COMPANY_ADMIN,
+      status: UserStatus.ACTIVE,
+      companyId: company._id,
+      isEmailVerified: true,
+      permissions,
+    });
+
     const updated = await this.companyModel.findByIdAndUpdate(
       companyId,
       {
@@ -471,12 +512,21 @@ export class CompaniesService {
             name: dto.name.trim(),
             email,
             permissions,
-            status: 'PENDING',
+            status: 'ACTIVE',
             invitedAt: new Date(),
           },
         },
       },
-      { new: true },
+      { returnDocument: 'after' },
+    );
+
+    const loginUrl = this.configService.get<string>('app.adminAppUrl') || 'http://localhost:5173/login';
+    await this.mailService.sendSubAdminInviteEmail(
+      email,
+      dto.name.trim(),
+      company.name,
+      rawPassword,
+      loginUrl
     );
 
     const admins = updated?.subAdmins ?? [];
@@ -496,10 +546,14 @@ export class CompaniesService {
 
   async removeSubAdmin(companyId: string, email: string) {
     const normalized = normalizeEmail(email);
+    
+    // Remove the actual user account so they lose access
+    await this.userModel.findOneAndDelete({ email: normalized, companyId });
+
     const updated = await this.companyModel.findByIdAndUpdate(
       companyId,
       { $pull: { subAdmins: { email: normalized } } },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!updated) {

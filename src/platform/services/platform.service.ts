@@ -152,7 +152,7 @@ export class PlatformService implements OnModuleInit {
     const plan = await this.planModel.findOneAndUpdate(
       { planType: normalized },
       { ...dto },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!plan) {
       throw new BadRequestException('Plan not found');
@@ -197,7 +197,7 @@ export class PlatformService implements OnModuleInit {
     const settings = await this.settingsModel.findOneAndUpdate(
       { key: 'PLATFORM' },
       { ...dto, key: 'PLATFORM' },
-      { new: true, upsert: true },
+      { returnDocument: 'after', upsert: true },
     );
     return this.responseService.success('Payment settings updated', settings);
   }
@@ -700,7 +700,7 @@ export class PlatformService implements OnModuleInit {
     const removed = await this.userModel.findOneAndUpdate(
       { email: normalized, role: UserRole.SUPPORT_ADMIN },
       { status: UserStatus.INACTIVE },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!removed) {
       throw new BadRequestException('Support admin not found');
@@ -718,7 +718,7 @@ export class PlatformService implements OnModuleInit {
     const updated = await this.userModel.findOneAndUpdate(
       { email: normalized, role: UserRole.SUPPORT_ADMIN, status: { $ne: UserStatus.INACTIVE } },
       { $set: { permissions: cleaned } },
-      { new: true },
+      { returnDocument: 'after' },
     );
 
     if (!updated) {

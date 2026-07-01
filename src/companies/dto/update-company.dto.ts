@@ -15,6 +15,10 @@ export class UpdateCompanyDto extends PartialType(CreateCompanyDto) {
 
   @IsOptional()
   @IsString()
+  logoUrl?: string;
+
+  @IsOptional()
+  @IsString()
   @IsValidPhoneNumber()
   phone?: string;
 }

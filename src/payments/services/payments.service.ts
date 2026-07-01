@@ -6,7 +6,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
-import Razorpay from 'razorpay';
+const Razorpay = require('razorpay');
 import {
   BillingPeriod,
   PaymentVerificationStatus,
@@ -147,7 +147,7 @@ export class PaymentsService {
         verifiedAt: new Date(),
         rejectionReason,
       },
-      { new: true },
+      { returnDocument: 'after' },
     );
     if (!payment) throw new NotFoundException('Payment not found');
     return this.responseService.success('Payment rejected', payment);
@@ -166,15 +166,20 @@ export class PaymentsService {
     const options = {
       amount: amountInr * 100, // Razorpay amount is in paise
       currency: 'INR',
-      receipt: `rcptid_${companyId}_${Date.now()}`,
+      receipt: `rcpt_${companyId.substring(companyId.length - 6)}_${Date.now()}`,
     };
 
-    const order = await this.razorpayInstance.orders.create(options);
-    return this.responseService.success('Razorpay order created', {
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-    });
+    try {
+      const order = await this.razorpayInstance.orders.create(options);
+      return this.responseService.success('Razorpay order created', {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+      });
+    } catch (error) {
+      console.error('Razorpay Error:', error);
+      throw error;
+    }
   }
 
   async verifyRazorpayPayment(dto: any, companyId: string, userId: string) {

@@ -42,4 +42,8 @@ export class CreateCompanyDto {
   @IsOptional()
   @IsEnum(CompanyStatus)
   status?: CompanyStatus;
+
+  @IsOptional()
+  @IsString()
+  logoUrl?: string;
 }

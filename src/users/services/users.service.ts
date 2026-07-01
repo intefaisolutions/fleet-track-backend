@@ -300,7 +300,7 @@ export class UsersService {
 
     try {
       const item = await this.userModel
-        .findByIdAndUpdate(id, update, { new: true })
+        .findByIdAndUpdate(id, update, { returnDocument: 'after' })
         .select(SAFE_USER_SELECT);
 
       if (!item) {
@@ -338,7 +338,7 @@ export class UsersService {
 
   async updateStatus(id: string, dto: UpdateUserStatusDto) {
     const item = await this.userModel
-      .findByIdAndUpdate(id, { status: dto.status }, { new: true })
+      .findByIdAndUpdate(id, { status: dto.status }, { returnDocument: 'after' })
       .select(SAFE_USER_SELECT);
 
     if (!item) {
@@ -360,7 +360,7 @@ export class UsersService {
 
   async verifyEmail(id: string) {
     const item = await this.userModel
-      .findByIdAndUpdate(id, { isEmailVerified: true }, { new: true })
+      .findByIdAndUpdate(id, { isEmailVerified: true }, { returnDocument: 'after' })
       .select(SAFE_USER_SELECT);
 
     if (!item) {

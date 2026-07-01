@@ -6,6 +6,7 @@ const ALL_PERMISSIONS = Object.values(Permission);
 const COMPANY_ADMIN_PERMISSIONS: Permission[] = [
   Permission.USERS_READ,
   Permission.USERS_WRITE,
+  Permission.USERS_DELETE,
   Permission.VEHICLES_READ,
   Permission.VEHICLES_WRITE,
   Permission.VEHICLES_DELETE,

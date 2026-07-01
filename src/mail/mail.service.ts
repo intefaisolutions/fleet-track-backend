@@ -273,39 +273,59 @@ export class MailService {
     const from = this.configService.get<string>('mail.from');
     const appName = this.configService.get<string>('app.name') || 'FleetTrack';
 
+    const today = new Date().toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
     const html = `
       <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
         <h2 style="color: #dc2626; margin-bottom: 8px;">Account Suspended</h2>
         <p style="color: #475569; line-height: 1.5;">
-          Dear <strong>${companyName}</strong>,
+          Dear <strong>${companyName} Team</strong>,
         </p>
         <p style="color: #475569; line-height: 1.5;">
-          Your ${appName} account has been suspended by the administration.
+          Your ${appName} account has been suspended by the administrator.
         </p>
         <div style="margin: 20px 0; padding: 16px; background: #fee2e2; border-left: 4px solid #ef4444; border-radius: 4px;">
-          <p style="margin: 0 0 8px; font-weight: 600; color: #991b1b;">Reason for Suspension:</p>
-          <p style="margin: 0; color: #7f1d1d;">${reason}</p>
+          <p style="margin: 0 0 8px; font-weight: 600; color: #991b1b;">Reason:</p>
+          <p style="margin: 0 0 12px; color: #7f1d1d;">${reason}</p>
+          <p style="margin: 0; color: #7f1d1d; font-size: 13px; line-height: 1.5;">
+            Your organization ("${companyName}") has been suspended. All users associated with this organization will be unable to access the system until the account is reactivated.
+          </p>
         </div>
-        ${validity ? `
         <table style="width: 100%; margin: 20px 0; font-size: 14px; color: #475569; border-collapse: collapse;">
           <tr>
-            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><strong>License Validity</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><strong>Suspended On</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;">${today}</td>
+          </tr>
+          ${validity ? `
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><strong>License Valid Until</strong></td>
             <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;">${validity}</td>
           </tr>
+          ` : ''}
+          <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><strong>Status</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #e2e8f0;"><span style="color: #dc2626; font-weight: bold;">Suspended</span></td>
+          </tr>
         </table>
-        ` : ''}
         <p style="color: #64748b; font-size: 14px; line-height: 1.5;">
-          If you believe this is an error or wish to appeal this decision, please contact our support team.
+          If you believe this suspension is an error, please contact our support team at <a href="mailto:support@fleettrackservice.in" style="color: #2563eb; text-decoration: none;">support@fleettrackservice.in</a>.
         </p>
       </div>
     `;
 
     const text = [
-      `Dear ${companyName},`,
-      `Your ${appName} account has been suspended.`,
+      `Dear ${companyName} Team,`,
+      `Your ${appName} account has been suspended by the administrator.`,
       `Reason: ${reason}`,
-      validity ? `License Validity: ${validity}` : '',
-      `Please contact support for further assistance.`
+      `Your organization ("${companyName}") has been suspended. All users associated with this organization will be unable to access the system until the account is reactivated.`,
+      `Suspended On: ${today}`,
+      validity ? `License Valid Until: ${validity}` : '',
+      `Status: Suspended`,
+      `If you believe this suspension is an error, please contact our support team at support@fleettrackservice.in`
     ].filter(Boolean).join('\n');
 
     try {
@@ -320,6 +340,76 @@ export class MailService {
       return true;
     } catch (err) {
       this.logger.error(`Failed to send suspension email to ${to}`, err);
+      return false;
+    }
+  }
+
+  /** Notification when a sub-admin is invited */
+  async sendSubAdminInviteEmail(
+    to: string,
+    name: string,
+    companyName: string,
+    plainPassword: string,
+    loginUrl: string,
+  ): Promise<boolean> {
+    const enabled = this.configService.get<boolean>('mail.enabled');
+    if (!enabled || !this.isConfigured()) {
+      this.logger.warn(
+        `Mail disabled or SMTP not configured; sub-admin invite email for ${to} not sent`,
+      );
+      return false;
+    }
+
+    const fromName = this.configService.get<string>('mail.fromName');
+    const from = this.configService.get<string>('mail.from');
+    const appName = this.configService.get<string>('app.name') || 'FleetTrack';
+
+    const html = `
+      <div style="font-family: Inter, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
+        <h2 style="color: #0369a1; margin-bottom: 8px;">Welcome to ${appName}!</h2>
+        <p style="color: #475569; line-height: 1.5;">
+          Dear <strong>${name}</strong>,
+        </p>
+        <p style="color: #475569; line-height: 1.5;">
+          You have been invited by <strong>${companyName}</strong> to join as a Sub-Admin.
+        </p>
+        <div style="margin: 20px 0; padding: 16px; background: #f0f9ff; border-left: 4px solid #0ea5e9; border-radius: 4px;">
+          <p style="margin: 0 0 8px; font-weight: 600; color: #075985;">Your Login Credentials:</p>
+          <p style="margin: 0 0 4px; color: #0c4a6e;">Email: <strong>${to}</strong></p>
+          <p style="margin: 0; color: #0c4a6e;">Temporary Password: <strong>${plainPassword}</strong></p>
+        </div>
+        <p style="color: #475569; line-height: 1.5;">
+          Please log in using the link below:
+        </p>
+        <a href="${loginUrl}" style="display: inline-block; margin: 16px 0; padding: 12px 24px; background: #0ea5e9; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold;">Login Now</a>
+        <p style="color: #64748b; font-size: 14px; line-height: 1.5; margin-top: 24px;">
+          For security reasons, we strongly recommend changing your password immediately after your first login.
+        </p>
+      </div>
+    `;
+
+    const text = [
+      `Dear ${name},`,
+      `You have been invited by ${companyName} to join as a Sub-Admin on ${appName}.`,
+      `Your Login Credentials:`,
+      `Email: ${to}`,
+      `Temporary Password: ${plainPassword}`,
+      `Login URL: ${loginUrl}`,
+      `Please change your password immediately after logging in.`
+    ].join('\n');
+
+    try {
+      await this.getTransporter().sendMail({
+        from: `"${fromName}" <${from}>`,
+        to,
+        subject: `You've been invited as a Sub-Admin to ${companyName}`,
+        text,
+        html,
+      });
+      this.logger.log(`Sub-admin invite email sent to ${to}`);
+      return true;
+    } catch (err) {
+      this.logger.error(`Failed to send sub-admin invite email to ${to}`, err);
       return false;
     }
   }

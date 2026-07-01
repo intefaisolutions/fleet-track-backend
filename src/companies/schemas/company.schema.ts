@@ -24,6 +24,9 @@ export class Company {
   @Prop({ trim: true })
   country?: string;
 
+  @Prop({ trim: true })
+  logoUrl?: string;
+
   @Prop({
     type: String,
     enum: CompanyStatus,
