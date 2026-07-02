@@ -21,6 +21,7 @@ import {
 import { ResponseService } from '../../common/responses/response.service';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
+import { SubscriptionsService } from '../../subscriptions/services/subscriptions.service';
 import { Payment, PaymentDocument } from '../schemas/payment.schema';
 import { SubmitPaymentDto } from '../dto/submit-payment.dto';
 
@@ -36,6 +37,7 @@ export class PaymentsService {
     @InjectModel(SubscriptionPlan.name)
     private readonly planModel: Model<SubscriptionPlanDocument>,
     private readonly responseService: ResponseService,
+    private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
   private get razorpayInstance() {
@@ -163,8 +165,34 @@ export class PaymentsService {
       throw new BadRequestException('Plan is free or price is not set');
     }
 
+    // Check if the wallet covers the full amount! (or if the remaining is less than ₹1, which Razorpay rejects)
+    const preview = await this.subscriptionsService.previewPlanChange(companyId, plan._id.toString());
+    const finalAmountInr = preview?.data?.amountToPay ?? amountInr;
+
+    if (finalAmountInr < 1) {
+      // Wallet fully covers it!
+      const created = await this.paymentModel.create({
+        companyId,
+        submittedBy: companyId, // Can't easily get userId here without changing params, but companyId is okay
+        status: PaymentVerificationStatus.VERIFIED, // auto verify
+        planType: normalized,
+        billingPeriod,
+        amount: 0,
+        transactionId: 'WALLET_FULL',
+        verifiedBy: companyId,
+        verifiedAt: new Date(),
+        notes: 'Paid fully via Wallet Credits',
+      });
+      await this.subscriptionsService.changePlan(companyId, plan._id.toString(), created._id.toString());
+      return this.responseService.success('Plan upgraded using Wallet Balance', {
+        orderId: 'WALLET_PAID',
+        amount: 0,
+        currency: 'INR',
+      });
+    }
+    
     const options = {
-      amount: amountInr * 100, // Razorpay amount is in paise
+      amount: Math.round(finalAmountInr * 100), // Razorpay amount is in paise (must be strictly integer)
       currency: 'INR',
       receipt: `rcpt_${companyId.substring(companyId.length - 6)}_${Date.now()}`,
     };
@@ -214,33 +242,10 @@ export class PaymentsService {
       notes: 'Paid via Razorpay',
     });
 
-    const limits = await this.resolvePlanLimits(normalized);
-    await this.companyModel.findByIdAndUpdate(companyId, {
-      planType: normalized,
-      vehicleLimit: limits.vehicleLimit,
-      maxAdmins: limits.maxAdmins,
-      maxOwners: limits.maxOwners,
-      maxDrivers: limits.maxDrivers,
-    });
-
-    const periodEnd = new Date();
-    if (billingPeriod === BillingPeriod.YEARLY) {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    if (plan) {
+      // Use SubscriptionsService to calculate prorated credits and apply wallet balances automatically!
+      await this.subscriptionsService.changePlan(companyId, plan._id.toString(), created._id.toString());
     }
-
-    await this.subscriptionModel.findOneAndUpdate(
-      { companyId },
-      {
-        planType: normalized,
-        status: SubscriptionStatus.ACTIVE,
-        vehicleLimit: limits.vehicleLimit,
-        billingPeriod: billingPeriod,
-        currentPeriodEnd: periodEnd,
-      },
-      { upsert: true },
-    );
 
     return this.responseService.success('Payment successful and plan upgraded', created);
   }

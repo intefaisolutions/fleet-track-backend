@@ -47,7 +47,7 @@ export class SubscriptionsService {
     return { usedAmount, remainingCredit, elapsedDays, totalDays };
   }
 
-  async changePlan(companyId: string, newPlanId: string, paymentId?: string, action: SubscriptionAction = SubscriptionAction.UPGRADED) {
+  async changePlan(companyId: string, newPlanId: string, paymentId?: string) {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -112,6 +112,15 @@ export class SubscriptionsService {
       const oldPlanId = currentSub.planId;
       const oldPrice = currentSub.originalPrice;
 
+      let calculatedAction = SubscriptionAction.UPGRADED;
+      if (newPrice > oldPrice) {
+        calculatedAction = SubscriptionAction.UPGRADED;
+      } else if (newPrice < oldPrice) {
+        calculatedAction = SubscriptionAction.DOWNGRADED;
+      } else {
+        calculatedAction = SubscriptionAction.RENEWED;
+      }
+
       const now = new Date();
       const nextMonth = new Date(now);
       nextMonth.setMonth(nextMonth.getMonth() + 1); // Exact date logic
@@ -130,7 +139,7 @@ export class SubscriptionsService {
       await this.historyModel.create([{
         companyId: company._id,
         subscriptionId: currentSub._id,
-        action,
+        action: calculatedAction,
         oldPlanId: oldPlanId,
         newPlanId: newPlan._id,
         oldPrice: oldPrice,

@@ -10,6 +10,8 @@ import { Payment, PaymentSchema } from './schemas/payment.schema';
 import { PaymentsController } from './controllers/payments.controller';
 import { PaymentsService } from './services/payments.service';
 
+import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
@@ -18,6 +20,7 @@ import { PaymentsService } from './services/payments.service';
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
     ]),
+    SubscriptionsModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],

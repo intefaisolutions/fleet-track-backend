@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import mongoose, { Document, Types } from 'mongoose';
 
 export type WalletTransactionDocument = WalletTransaction & Document;
 
@@ -10,7 +10,7 @@ export enum TransactionType {
 
 @Schema({ timestamps: true })
 export class WalletTransaction {
-  @Prop({ type: Types.ObjectId, ref: 'Company', required: true, index: true })
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true, index: true })
   companyId: Types.ObjectId;
 
   @Prop({ type: String, enum: TransactionType, required: true })
@@ -28,7 +28,7 @@ export class WalletTransaction {
   @Prop({ required: true })
   currentBalance: number;
 
-  @Prop({ type: Types.ObjectId, ref: 'Subscription' })
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Subscription' })
   referenceSubscriptionId?: Types.ObjectId;
 
   @Prop()
@@ -37,10 +37,10 @@ export class WalletTransaction {
   @Prop()
   description?: string;
 
-  @Prop({ type: Types.ObjectId, ref: 'Payment' })
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Payment' })
   paymentId?: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, ref: 'User' })
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'User' })
   performedBy?: Types.ObjectId;
 }
 

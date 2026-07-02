@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { WalletTransaction, WalletTransactionDocument } from './schemas/wallet-transaction.schema';
 import { Company, CompanyDocument } from '../companies/schemas/company.schema';
 import { ResponseService } from '../common/responses/response.service';
@@ -23,7 +23,11 @@ export class WalletsService {
   }
 
   async getTransactions(companyId?: string) {
-    const filter = companyId ? { companyId } : {};
+    const filter: any = {};
+    if (companyId) {
+      filter.companyId = new Types.ObjectId(companyId);
+    }
+    
     const transactions = await this.transactionModel
       .find(filter)
       .sort({ createdAt: -1 })
