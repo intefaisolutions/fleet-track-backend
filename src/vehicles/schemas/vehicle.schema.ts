@@ -62,6 +62,12 @@ export class Vehicle {
 
   @Prop({ default: true })
   isActive: boolean;
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const VehicleSchema = SchemaFactory.createForClass(Vehicle);

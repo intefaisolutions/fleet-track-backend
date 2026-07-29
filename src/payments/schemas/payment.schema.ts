@@ -2,8 +2,8 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import {
   BillingPeriod,
+  PaymentMethodType,
   PaymentVerificationStatus,
-  SubscriptionPlanType,
 } from '../../common/enums';
 
 export type PaymentDocument = Payment & Document;
@@ -29,6 +29,14 @@ export class Payment {
   @Prop({ type: String, enum: BillingPeriod, default: BillingPeriod.MONTHLY })
   billingPeriod: BillingPeriod;
 
+  @Prop({
+    type: String,
+    enum: PaymentMethodType,
+    default: PaymentMethodType.UPI,
+    index: true,
+  })
+  paymentMethod?: PaymentMethodType;
+
   @Prop({ required: true, min: 0 })
   amount: number;
 
@@ -40,6 +48,9 @@ export class Payment {
 
   @Prop({ trim: true })
   paymentGateway?: string;
+
+  @Prop({ trim: true })
+  razorpayOrderId?: string;
 
   @Prop({ trim: true })
   invoiceNo?: string;

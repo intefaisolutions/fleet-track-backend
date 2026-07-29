@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
-import { BillingPeriod } from '../../common/enums';
+import { BillingPeriod, PaymentMethodType } from '../../common/enums';
 
 export class SubmitPaymentDto {
   @ApiProperty({ example: 'PREMIUM' })
@@ -22,6 +22,15 @@ export class SubmitPaymentDto {
   @IsString()
   @MinLength(4)
   transactionId: string;
+
+  @ApiPropertyOptional({
+    enum: PaymentMethodType,
+    default: PaymentMethodType.UPI,
+    description: 'Manual channel: UPI or BANK_TRANSFER',
+  })
+  @IsOptional()
+  @IsEnum(PaymentMethodType)
+  paymentMethod?: PaymentMethodType;
 
   @ApiPropertyOptional()
   @IsOptional()

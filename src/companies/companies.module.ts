@@ -7,6 +7,10 @@ import { Subscription, SubscriptionSchema } from '../subscriptions/schemas/subsc
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Vehicle, VehicleSchema } from '../vehicles/schemas/vehicle.schema';
 import { Company, CompanySchema } from './schemas/company.schema';
+import {
+  LicenseResendLog,
+  LicenseResendLogSchema,
+} from './schemas/license-resend-log.schema';
 import { CompaniesController } from './controllers/companies.controller';
 import { CompaniesService } from './services/companies.service';
 
@@ -20,6 +24,7 @@ import { CompaniesService } from './services/companies.service';
       { name: User.name, schema: UserSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: Vehicle.name, schema: VehicleSchema },
+      { name: LicenseResendLog.name, schema: LicenseResendLogSchema },
     ]),
   ],
   controllers: [CompaniesController],

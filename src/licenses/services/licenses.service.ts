@@ -24,6 +24,15 @@ import { License, LicenseDocument } from '../schemas/license.schema';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { UpdateLicenseDto } from '../dto/update-license.dto';
 import { RevokeLicenseDto } from '../dto/revoke-license.dto';
+import { LicenseValidationService } from './license-validation.service';
+import { LicenseValidationFailure } from '../constants/license-validation.messages';
+import {
+  restoreUniqueValue,
+  restoreUpdate,
+  softDeleteUpdate,
+  tombstoneUniqueValue,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
 
 /** Default when LICENSE_GRACE_PERIOD_DAYS is unset */
 export const LICENSE_GRACE_PERIOD_DAYS = 7;
@@ -42,6 +51,7 @@ export class LicensesService {
     private readonly responseService: ResponseService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    private readonly licenseValidation: LicenseValidationService,
   ) {}
 
   private getGracePeriodDays(): number {
@@ -111,46 +121,56 @@ export class LicensesService {
 
   async validateKeyPreview(licenseKey: string) {
     const license = await this.findByKey(licenseKey);
-    if (!license) {
-      return { valid: false, message: 'Invalid license key' };
+    const refreshed = license
+      ? await this.refreshExpiredStatus(license)
+      : null;
+
+    const result = this.licenseValidation.evaluateLicense(refreshed, {
+      purpose: 'registration',
+    });
+
+    if (!result.valid || !result.license) {
+      return {
+        valid: false,
+        failure: result.failure,
+        message:
+          result.message ??
+          this.licenseValidation.message(LicenseValidationFailure.NOT_FOUND),
+      };
     }
 
-    const refreshed = await this.refreshExpiredStatus(license);
-
-    if (refreshed.status === LicenseKeyStatus.CANCELLED) {
-      return { valid: false, message: 'This license has been cancelled' };
-    }
-    if (refreshed.status === LicenseKeyStatus.REVOKED) {
-      if (refreshed.revokedAt && refreshed.revokeGracePeriodHours) {
-        const graceEnd = new Date(refreshed.revokedAt);
-        graceEnd.setHours(graceEnd.getHours() + refreshed.revokeGracePeriodHours);
-        if (new Date() > graceEnd) {
-          return { valid: false, message: 'This license has been revoked and the grace period has ended' };
-        }
-      } else {
-        return { valid: false, message: 'This license has been revoked' };
-      }
-    }
-    if (refreshed.status !== LicenseKeyStatus.UNUSED) {
-      return { valid: false, message: 'This license key has already been used' };
-    }
-    if (refreshed.validUntil < new Date()) {
-      return { valid: false, message: 'This license key has expired' };
-    }
-
+    const validLicense = result.license;
     return {
       valid: true,
-      plan: refreshed.planType,
-      planLabel: this.formatPlanLabel(refreshed.planType),
-      intendedCompanyName: refreshed.intendedCompanyName,
-      contactEmail: refreshed.contactEmail,
-      contactPhone: refreshed.contactPhone,
-      maxAdmins: refreshed.maxAdmins,
-      maxOwners: refreshed.maxOwners,
-      maxDrivers: refreshed.maxDrivers,
-      maxVehicles: refreshed.maxVehicles,
-      validUntil: refreshed.validUntil.toISOString(),
+      plan: validLicense.planType,
+      planLabel: this.formatPlanLabel(validLicense.planType),
+      intendedCompanyName: validLicense.intendedCompanyName,
+      contactEmail: validLicense.contactEmail,
+      contactPhone: validLicense.contactPhone,
+      maxAdmins: validLicense.maxAdmins,
+      maxOwners: validLicense.maxOwners,
+      maxDrivers: validLicense.maxDrivers,
+      maxVehicles: validLicense.maxVehicles,
+      validUntil: validLicense.validUntil.toISOString(),
     };
+  }
+
+  /**
+   * True when Company Admin must complete post-login license activation.
+   * Legacy companies (flag missing) do not require activation.
+   */
+  async companyRequiresLicenseActivation(companyId: string): Promise<boolean> {
+    const company = await this.companyModel.findById(companyId).select(
+      'licenseId licenseActivated',
+    );
+    if (!company?.licenseId) return false;
+    if (
+      company.licenseActivated === undefined ||
+      company.licenseActivated === null
+    ) {
+      return false;
+    }
+    return company.licenseActivated === false;
   }
 
   async assertCompanyLicenseAllowsAccess(companyId: string) {
@@ -229,31 +249,12 @@ export class LicensesService {
   }
 
   private async assertUniqueLicenseContact(contactEmail?: string, contactPhone?: string) {
-    const activeFilter = { status: { $ne: LicenseKeyStatus.CANCELLED } };
-
     if (contactEmail) {
-      const email = normalizeEmail(contactEmail);
-      const existingForEmail = await this.licenseModel.findOne({
-        ...activeFilter,
-        contactEmail: email,
-      });
-      if (existingForEmail) {
-        throw new ConflictException('Email already exists');
-      }
-
-      const users = await this.userModel.find();
-      const duplicateUserEmail = users.some(u => normalizeEmail(u.email) === email);
-      if (duplicateUserEmail) {
-        throw new ConflictException('Email already exists');
-      }
-
-      const companies = await this.companyModel.find({ email: { $regex: new RegExp('^' + email + '$', 'i') } });
-      if (companies.length > 0) {
-        throw new ConflictException('Email already exists');
-      }
+      await this.licenseValidation.assertLicenseContactEmailUnique(contactEmail);
     }
 
     if (contactPhone) {
+      const activeFilter = { status: { $ne: LicenseKeyStatus.CANCELLED } };
       const phoneDigits = normalizePhone(contactPhone);
       const withPhone = await this.licenseModel.find({
         ...activeFilter,
@@ -381,7 +382,9 @@ export class LicensesService {
 
   async findAll(status?: LicenseKeyStatus) {
     const filter = status ? { status } : {};
-    const items = await this.licenseModel.find(filter).sort({ createdAt: -1 });
+    const items = await this.licenseModel
+      .find(withNotDeleted(filter))
+      .sort({ createdAt: -1 });
     return this.responseService.success('Licenses fetched successfully', items);
   }
 
@@ -427,16 +430,15 @@ export class LicensesService {
     };
   }
 
-  async validateForRegistration(licenseKey: string) {
-    const preview = await this.validateKeyPreview(licenseKey);
-    if (!preview.valid) {
-      throw new BadRequestException(preview.message ?? 'Invalid license key');
-    }
+  async validateForRegistration(licenseKey: string, companyEmail?: string) {
     const license = await this.findByKey(licenseKey);
-    if (!license) {
-      throw new BadRequestException('Invalid license key');
+    if (license) {
+      await this.refreshExpiredStatus(license);
     }
-    return license;
+    return this.licenseValidation.validateForRegistration(
+      licenseKey,
+      companyEmail,
+    );
   }
 
   async markUsed(licenseId: string, companyId: string) {
@@ -501,18 +503,38 @@ export class LicensesService {
   }
 
   async remove(id: string) {
-    const item = await this.licenseModel.findById(id);
+    const item = await this.licenseModel.findOne(withNotDeleted({ _id: id }));
     if (!item) throw new NotFoundException('License not found');
     if (item.status === LicenseKeyStatus.ACTIVE && item.companyId) {
       throw new BadRequestException('Cannot delete an active license in use');
     }
-    await this.licenseModel.findByIdAndDelete(id);
+    await this.licenseModel.findByIdAndUpdate(
+      id,
+      softDeleteUpdate({
+        status: LicenseKeyStatus.CANCELLED,
+        licenseKey: tombstoneUniqueValue(item.licenseKey, id),
+      }),
+    );
     return this.responseService.success('License deleted successfully');
+  }
+
+  async restore(id: string) {
+    const item = await this.licenseModel.findOne({ _id: id, isDeleted: true });
+    if (!item) throw new NotFoundException('Deleted license not found');
+    await this.licenseModel.findByIdAndUpdate(
+      id,
+      restoreUpdate({
+        licenseKey: restoreUniqueValue(item.licenseKey, id),
+      }),
+    );
+    return this.responseService.success('License restored successfully');
   }
 
   async getPlanDefaults(planType: string) {
     const normalized = planType.toUpperCase().trim();
-    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
+    const plan = await this.planModel.findOne(
+      withNotDeleted({ planType: normalized, isActive: true }),
+    );
     if (plan) {
       return {
         vehicleLimit: plan.vehicleLimit,

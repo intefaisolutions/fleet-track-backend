@@ -41,6 +41,15 @@ export class Company {
   @Prop({ type: Types.ObjectId, ref: 'License', index: true })
   licenseId?: Types.ObjectId;
 
+  /**
+   * Post-login license confirmation gate for Company Admins.
+   * - Explicit `false` after public license registration → must activate
+   * - `true` after successful activation (or Super Admin onboard)
+   * - `undefined` on legacy companies → treated as already activated
+   */
+  @Prop({ type: Boolean, index: true })
+  licenseActivated?: boolean;
+
   @Prop({ default: 5 })
   vehicleLimit: number;
 
@@ -79,6 +88,12 @@ export class Company {
     status: string;
     invitedAt?: Date;
   }[];
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const CompanySchema = SchemaFactory.createForClass(Company);

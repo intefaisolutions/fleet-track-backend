@@ -8,6 +8,7 @@ import {
   SubscriptionPlanSchema,
 } from '../platform/schemas/subscription-plan.schema';
 import { LicensesController } from './controllers/licenses.controller';
+import { LicenseValidationService } from './services/license-validation.service';
 import { LicensesService } from './services/licenses.service';
 
 @Module({
@@ -20,7 +21,7 @@ import { LicensesService } from './services/licenses.service';
     ]),
   ],
   controllers: [LicensesController],
-  providers: [LicensesService],
-  exports: [LicensesService],
+  providers: [LicensesService, LicenseValidationService],
+  exports: [LicensesService, LicenseValidationService],
 })
 export class LicensesModule {}

@@ -27,11 +27,19 @@ export class AllExceptionsFilter implements ExceptionFilter {
         : (exceptionResponse as { message?: string | string[] })?.message ||
           'Internal server error';
 
+    const extraData =
+      exceptionResponse &&
+      typeof exceptionResponse === 'object' &&
+      'data' in exceptionResponse
+        ? (exceptionResponse as { data?: unknown }).data
+        : undefined;
+
     response.status(status).json({
       success: false,
       message: Array.isArray(message) ? message.join(', ') : message,
       error:
         exception instanceof Error ? exception.name : 'InternalServerError',
+      ...(extraData !== undefined ? { data: extraData } : {}),
     });
   }
 }

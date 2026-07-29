@@ -13,12 +13,23 @@ import { normalizeEmail, normalizePhone } from '../../common/utils/contact.util'
 import { ResponseService } from '../../common/responses/response.service';
 import { PasswordService } from '../../auth/services/password.service';
 import { MailService } from '../../mail/mail.service';
+import {
+  DRIVER_ACTIVITY_TOUCH_INTERVAL_MS,
+  DRIVER_INACTIVITY_MS,
+} from '../../constants/driver-session.constant';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { DriversService } from '../../drivers/services/drivers.service';
 import { User, UserDocument } from '../schemas/user.schema';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { UpdateUserDto } from '../dto/update-user.dto';
 import { UpdateUserStatusDto } from '../dto/update-user-status.dto';
+import {
+  restoreUniqueValue,
+  restoreUpdate,
+  softDeleteUpdate,
+  tombstoneUniqueValue,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
 
 const SAFE_USER_SELECT =
   '-password -refreshTokenHash -passwordResetToken -passwordResetExpires';
@@ -71,10 +82,12 @@ export class UsersService {
     }
 
     if (role === UserRole.VEHICLE_OWNER) {
-      const count = await this.userModel.countDocuments({
-        companyId,
-        role: UserRole.VEHICLE_OWNER,
-      });
+      const count = await this.userModel.countDocuments(
+        withNotDeleted({
+          companyId,
+          role: UserRole.VEHICLE_OWNER,
+        }),
+      );
       if (count >= company.maxOwners) {
         throw new BadRequestException(
           `Vehicle owner limit reached (${company.maxOwners}). Upgrade your plan.`,
@@ -83,11 +96,12 @@ export class UsersService {
     }
 
     if (role === UserRole.COMPANY_ADMIN) {
-      const count = await this.userModel.countDocuments({
-        companyId,
-        role: UserRole.COMPANY_ADMIN,
-      });
-      if (count >= company.maxAdmins) {
+      const count = await this.userModel.countDocuments(
+        withNotDeleted({
+          companyId,
+          role: UserRole.COMPANY_ADMIN,
+        }),
+      );      if (count >= company.maxAdmins) {
         throw new BadRequestException(
           `Company admin limit reached (${company.maxAdmins}).`,
         );
@@ -104,7 +118,9 @@ export class UsersService {
     const normalizedPhone = normalizePhone(phone);
 
     const users = await this.userModel.find(
-      excludeUserId ? { _id: { $ne: excludeUserId } } : {},
+      withNotDeleted(
+        excludeUserId ? { _id: { $ne: excludeUserId } } : {},
+      ),
     );
 
     for (const u of users) {
@@ -243,7 +259,7 @@ export class UsersService {
     }
 
     const items = await this.userModel
-      .find(filter)
+      .find(withNotDeleted(filter))
       .select(SAFE_USER_SELECT)
       .sort({ createdAt: -1 });
 
@@ -252,7 +268,7 @@ export class UsersService {
 
   async findByEmail(email: string) {
     return this.userModel
-      .findOne({ email: normalizeEmail(email) })
+      .findOne(withNotDeleted({ email: normalizeEmail(email) }))
       .select('+password +refreshTokenHash +passwordResetToken +passwordResetExpires');
   }
 
@@ -269,7 +285,9 @@ export class UsersService {
   }
 
   async findOne(id: string) {
-    const item = await this.userModel.findById(id).select(SAFE_USER_SELECT);
+    const item = await this.userModel
+      .findOne(withNotDeleted({ _id: id }))
+      .select(SAFE_USER_SELECT);
 
     if (!item) {
       throw new NotFoundException('User not found');
@@ -376,6 +394,57 @@ export class UsersService {
     });
   }
 
+  /**
+   * Record last login + last activity for drivers (and optionally any user).
+   */
+  async recordLoginActivity(userId: string) {
+    const now = new Date();
+    return this.userModel.findByIdAndUpdate(userId, {
+      lastLogin: now,
+      lastActivity: now,
+    });
+  }
+
+  /**
+   * True when a driver has been inactive longer than the configured window.
+   * Uses lastActivity, falling back to lastLogin for legacy sessions.
+   */
+  isDriverInactive(
+    user: Pick<User, 'role' | 'lastActivity' | 'lastLogin'>,
+  ): boolean {
+    if (user.role !== UserRole.DRIVER) {
+      return false;
+    }
+    const reference = user.lastActivity ?? user.lastLogin;
+    if (!reference) {
+      // No activity stamp yet — treat as active (will be stamped on next touch)
+      return false;
+    }
+    return Date.now() - new Date(reference).getTime() > DRIVER_INACTIVITY_MS;
+  }
+
+  /**
+   * Touch lastActivity for drivers at most once per interval (active users stay logged in).
+   */
+  async touchDriverActivityIfNeeded(
+    userId: string,
+    intervalMs = DRIVER_ACTIVITY_TOUCH_INTERVAL_MS,
+  ) {
+    const cutoff = new Date(Date.now() - intervalMs);
+    return this.userModel.findOneAndUpdate(
+      {
+        _id: userId,
+        role: UserRole.DRIVER,
+        $or: [
+          { lastActivity: { $exists: false } },
+          { lastActivity: null },
+          { lastActivity: { $lte: cutoff } },
+        ],
+      },
+      { $set: { lastActivity: new Date() } },
+    );
+  }
+
   async setPasswordReset(userId: string, tokenHash: string, expires: Date) {
     return this.userModel.findByIdAndUpdate(userId, {
       passwordResetToken: tokenHash,
@@ -393,7 +462,7 @@ export class UsersService {
   }
 
   async remove(id: string) {
-    const item = await this.userModel.findById(id);
+    const item = await this.userModel.findOne(withNotDeleted({ _id: id }));
     if (!item) {
       throw new NotFoundException('User not found');
     }
@@ -402,7 +471,37 @@ export class UsersService {
       await this.driversService.removeByUserId(id);
     }
 
-    await this.userModel.findByIdAndDelete(id);
+    await this.userModel.findByIdAndUpdate(
+      id,
+      softDeleteUpdate({
+        status: UserStatus.INACTIVE,
+        email: tombstoneUniqueValue(item.email, id),
+        phone: tombstoneUniqueValue(item.phone, id),
+        refreshTokenHash: undefined,
+      }),
+    );
     return this.responseService.success('User deleted successfully');
+  }
+
+  async restore(id: string) {
+    const item = await this.userModel.findOne({ _id: id, isDeleted: true });
+    if (!item) {
+      throw new NotFoundException('Deleted user not found');
+    }
+
+    await this.userModel.findByIdAndUpdate(
+      id,
+      restoreUpdate({
+        status: UserStatus.ACTIVE,
+        email: restoreUniqueValue(item.email, id),
+        phone: restoreUniqueValue(item.phone, id),
+      }),
+    );
+
+    if (item.role === UserRole.DRIVER) {
+      await this.driversService.restoreByUserId(id);
+    }
+
+    return this.responseService.success('User restored successfully');
   }
 }

@@ -84,4 +84,10 @@ export class ExpensesController {
     const ownerId = resolveVehicleOwnerUserId(user.role, user.userId);
     return this.sService.remove(id, ownerId);
   }
+
+  @Post(':id/restore')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
+  restore(@Param('id') id: string) {
+    return this.sService.restore(id);
+  }
 }

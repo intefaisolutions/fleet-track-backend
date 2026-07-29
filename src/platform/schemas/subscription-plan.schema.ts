@@ -8,6 +8,7 @@ export class SubscriptionPlan {
   @Prop({ required: true, unique: true, uppercase: true, trim: true })
   planType: string;
 
+  /** Plan Name shown in UI / billing */
   @Prop({ trim: true })
   displayName?: string;
 
@@ -16,6 +17,14 @@ export class SubscriptionPlan {
 
   @Prop({ type: [String], default: [] })
   features?: string[];
+
+  /** e.g. Community, Email, Chat + Email, Priority Chat, 24x7 Phone */
+  @Prop({ trim: true, default: 'Community' })
+  supportType?: string;
+
+  /** Expense/report data retention window in days (365+ = long-term / 1 year+) */
+  @Prop({ default: 7, min: 1 })
+  dataRetentionDays?: number;
 
   @Prop({ default: false })
   isSystem: boolean;
@@ -38,8 +47,15 @@ export class SubscriptionPlan {
   @Prop({ default: 0 })
   yearlyPriceInr: number;
 
-  @Prop({ default: true })
+  /** Enable / disable for new subscriptions (existing subscribers keep their plan) */
+  @Prop({ default: true, index: true })
   isActive: boolean;
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const SubscriptionPlanSchema = SchemaFactory.createForClass(SubscriptionPlan);

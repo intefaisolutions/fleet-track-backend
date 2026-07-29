@@ -51,6 +51,12 @@ export class Subscription {
 
   @Prop({ type: Types.ObjectId, ref: 'License' })
   licenseId?: Types.ObjectId;
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const SubscriptionSchema = SchemaFactory.createForClass(Subscription);

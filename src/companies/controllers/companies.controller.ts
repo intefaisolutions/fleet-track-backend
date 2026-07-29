@@ -8,9 +8,11 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { CompanyStatus } from '../../common/enums';
 import { Public } from '../../decorators/public.decorator';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
@@ -25,6 +27,7 @@ import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
 import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
 import { SuspendCompanyDto } from '../dto/suspend-company.dto';
+import { ActivateLicenseDto } from '../dto/activate-license.dto';
 import { CurrentUser } from '../../decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../types';
 
@@ -37,7 +40,7 @@ export class CompaniesController {
   @Post('register')
   @ApiOperation({
     summary:
-      'Public registration with license key (creates company + COMPANY_ADMIN; currently ACTIVE after valid license)',
+      'Public registration with license key (creates company + COMPANY_ADMIN; requires post-login license activation)',
   })
   register(@Body() dto: RegisterCompanyDto) {
     return this.companiesService.register(dto);
@@ -63,6 +66,62 @@ export class CompaniesController {
   @ApiQuery({ name: 'status', enum: CompanyStatus, required: false })
   findAll(@Query('status') status?: CompanyStatus) {
     return this.companiesService.findAll(status);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Get('me/license-activation')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({
+    summary: 'Get post-login license activation status for the current company',
+  })
+  getLicenseActivation(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.getLicenseActivationStatus(user.companyId);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('me/activate-license')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({
+    summary: 'Verify license key and unlock Company Admin dashboard',
+  })
+  activateLicense(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ActivateLicenseDto,
+  ) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.activateLicense(user.companyId, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post('me/resend-license-email')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({
+    summary:
+      'Resend license key email (60s cooldown, audit logged, same activation template)',
+  })
+  resendLicenseEmail(
+    @CurrentUser() user: AuthenticatedUser,
+    @Req() req: Request,
+  ) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.resendLicenseActivationEmail(
+      user.companyId,
+      user.userId,
+      {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+      },
+    );
   }
 
   @ApiBearerAuth()
@@ -162,5 +221,13 @@ export class CompaniesController {
   @Roles(ROLES.SUPER_ADMIN)
   remove(@Param('id') id: string) {
     return this.companiesService.remove(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(':id/restore')
+  @Roles(ROLES.SUPER_ADMIN)
+  restore(@Param('id') id: string) {
+    return this.companiesService.restore(id);
   }
 }

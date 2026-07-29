@@ -12,6 +12,7 @@ import {
 } from '../../subscriptions/schemas/subscription.schema';
 import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
+import { withNotDeleted } from '../../common/utils/soft-delete.util';
 
 @Injectable()
 export class ReportsService {
@@ -31,9 +32,9 @@ export class ReportsService {
       throw new BadRequestException('companyId is required for company dashboard');
     }
 
-    const filter: Record<string, unknown> = { companyId };
+    const filter: Record<string, unknown> = withNotDeleted({ companyId });
     const ownerVehicleFilter: Record<string, unknown> = ownerId
-      ? { companyId, ownerId }
+      ? withNotDeleted({ companyId, ownerId })
       : filter;
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -49,12 +50,12 @@ export class ReportsService {
       return [id, id.toString()];
     });
     const expenseFilter: Record<string, unknown> = ownerId
-      ? {
+      ? withNotDeleted({
           companyId,
           vehicleId: { $in: ownedVehicleIds },
           isActive: { $ne: false },
-        }
-      : { ...filter, isActive: { $ne: false } };
+        })
+      : withNotDeleted({ ...filter, isActive: { $ne: false } });
 
     const [
       totalVehicles,
@@ -74,13 +75,19 @@ export class ReportsService {
     ] = await Promise.all([
       this.vehicleModel.countDocuments(ownerVehicleFilter),
       ownerId
-        ? this.userModel.countDocuments({ _id: ownerId, role: UserRole.VEHICLE_OWNER })
-        : this.userModel.countDocuments({
-            companyId,
-            role: UserRole.VEHICLE_OWNER,
-          }),
-      this.driverModel.countDocuments(filter),
-      this.driverModel.countDocuments({ ...filter, isActive: true }),
+        ? this.userModel.countDocuments(
+            withNotDeleted({ _id: ownerId, role: UserRole.VEHICLE_OWNER }),
+          )
+        : this.userModel.countDocuments(
+            withNotDeleted({
+              companyId,
+              role: UserRole.VEHICLE_OWNER,
+            }),
+          ),
+      this.driverModel.countDocuments(withNotDeleted(filter)),
+      this.driverModel.countDocuments(
+        withNotDeleted({ ...filter, isActive: true }),
+      ),
       this.vehicleModel.countDocuments({
         ...ownerVehicleFilter,
         createdAt: { $gte: startOfMonth },

@@ -16,6 +16,11 @@ import { Company, CompanyDocument } from '../../companies/schemas/company.schema
 import { Driver, DriverDocument } from '../schemas/driver.schema';
 import { CreateDriverDto } from '../dto/create-driver.dto';
 import { UpdateDriverDto } from '../dto/update-driver.dto';
+import {
+  restoreUpdate,
+  softDeleteUpdate,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
 
 @Injectable()
 export class DriversService {
@@ -35,9 +40,11 @@ export class DriversService {
     const normalizedEmail = normalizeEmail(email);
     const normalizedPhone = normalizePhone(phone);
 
-    const users = await this.userModel.find({
-      $or: [{ email: normalizedEmail }, { phone }],
-    });
+    const users = await this.userModel.find(
+      withNotDeleted({
+        $or: [{ email: normalizedEmail }, { phone }],
+      }),
+    );
     for (const u of users) {
       if (normalizeEmail(u.email) === normalizedEmail) {
         throw new ConflictException('Email already exists');
@@ -93,18 +100,22 @@ export class DriversService {
 
     const companyId = user.companyId.toString();
 
-    let driver = await this.driverModel.findOne({
-      userId: { $in: this.idVariants(user._id) },
-    });
+    let driver = await this.driverModel.findOne(
+      withNotDeleted({
+        userId: { $in: this.idVariants(user._id) },
+      }),
+    );
     if (driver) {
       await this.syncProfileFromUser(user, driver);
       return driver;
     }
 
-    driver = await this.driverModel.findOne({
-      companyId,
-      phone: user.phone.trim(),
-    });
+    driver = await this.driverModel.findOne(
+      withNotDeleted({
+        companyId,
+        phone: user.phone.trim(),
+      }),
+    );
     if (driver) {
       driver.userId = user._id as Types.ObjectId;
       driver.fullName = user.fullName.trim();
@@ -116,8 +127,9 @@ export class DriversService {
     if (!company) {
       throw new BadRequestException('Company not found');
     }
-    const driverCount = await this.driverModel.countDocuments({ companyId });
-    if (driverCount >= company.maxDrivers) {
+    const driverCount = await this.driverModel.countDocuments(
+      withNotDeleted({ companyId }),
+    );    if (driverCount >= company.maxDrivers) {
       throw new BadRequestException(
         `Driver limit reached (${company.maxDrivers}). Upgrade your plan.`,
       );
@@ -142,9 +154,22 @@ export class DriversService {
   }
 
   async removeByUserId(userId: string) {
-    await this.driverModel.deleteMany({
-      userId: { $in: this.idVariants(userId) },
-    });
+    await this.driverModel.updateMany(
+      withNotDeleted({
+        userId: { $in: this.idVariants(userId) },
+      }),
+      softDeleteUpdate(),
+    );
+  }
+
+  async restoreByUserId(userId: string) {
+    await this.driverModel.updateMany(
+      {
+        userId: { $in: this.idVariants(userId) },
+        isDeleted: true,
+      },
+      restoreUpdate({ status: DriverStatus.ACTIVE }),
+    );
   }
 
   async create(dto: CreateDriverDto, companyId?: string) {
@@ -156,8 +181,9 @@ export class DriversService {
     if (!company) {
       throw new BadRequestException('Company not found');
     }
-    const driverCount = await this.driverModel.countDocuments({ companyId });
-    if (driverCount >= company.maxDrivers) {
+    const driverCount = await this.driverModel.countDocuments(
+      withNotDeleted({ companyId }),
+    );    if (driverCount >= company.maxDrivers) {
       throw new BadRequestException(
         `Driver limit reached (${company.maxDrivers}). Upgrade your plan.`,
       );
@@ -217,12 +243,14 @@ export class DriversService {
 
   async findAll(companyId?: string) {
     const filter = companyId ? { companyId } : {};
-    const items = await this.driverModel.find(filter).sort({ createdAt: -1 });
+    const items = await this.driverModel
+      .find(withNotDeleted(filter))
+      .sort({ createdAt: -1 });
     return this.responseService.success('Drivers fetched successfully', items);
   }
 
   async findOne(id: string) {
-    const item = await this.driverModel.findById(id);
+    const item = await this.driverModel.findOne(withNotDeleted({ _id: id }));
     if (!item) {
       throw new NotFoundException('Driver not found');
     }
@@ -230,9 +258,13 @@ export class DriversService {
   }
 
   async update(id: string, dto: UpdateDriverDto) {
-    const item = await this.driverModel.findByIdAndUpdate(id, dto, {
-      returnDocument: 'after',
-    });
+    const item = await this.driverModel.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      dto,
+      {
+        returnDocument: 'after',
+      },
+    );
     if (!item) {
       throw new NotFoundException('Driver not found');
     }
@@ -240,10 +272,65 @@ export class DriversService {
   }
 
   async remove(id: string) {
-    const item = await this.driverModel.findByIdAndDelete(id);
+    const item = await this.driverModel.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      softDeleteUpdate(),
+      { returnDocument: 'after' },
+    );
     if (!item) {
       throw new NotFoundException('Driver not found');
     }
-    return this.responseService.success('Driver deleted successfully');
+    if (item.userId) {
+      const user = await this.userModel.findOne(
+        withNotDeleted({ _id: item.userId }),
+      );
+      if (user) {
+        const uid = user._id.toString();
+        await this.userModel.findByIdAndUpdate(
+          user._id,
+          softDeleteUpdate({
+            status: UserStatus.INACTIVE,
+            email: `${user.email}__del_${uid}`,
+            phone: `${user.phone}__del_${uid}`,
+            refreshTokenHash: undefined,
+          }),
+        );
+      }
+    }
+    return this.responseService.success('Driver deleted successfully', item);
+  }
+
+  async restore(id: string) {
+    const item = await this.driverModel.findOneAndUpdate(
+      { _id: id, isDeleted: true },
+      restoreUpdate({ status: DriverStatus.ACTIVE }),
+      { returnDocument: 'after' },
+    );
+    if (!item) {
+      throw new NotFoundException('Deleted driver not found');
+    }
+    if (item.userId) {
+      const user = await this.userModel.findOne({
+        _id: item.userId,
+        isDeleted: true,
+      });
+      if (user) {
+        const uid = user._id.toString();
+        const marker = `__del_${uid}`;
+        await this.userModel.findByIdAndUpdate(
+          user._id,
+          restoreUpdate({
+            status: UserStatus.ACTIVE,
+            email: user.email.endsWith(marker)
+              ? user.email.slice(0, -marker.length)
+              : user.email,
+            phone: user.phone.endsWith(marker)
+              ? user.phone.slice(0, -marker.length)
+              : user.phone,
+          }),
+        );
+      }
+    }
+    return this.responseService.success('Driver restored successfully', item);
   }
 }

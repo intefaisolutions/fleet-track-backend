@@ -21,6 +21,10 @@ import { SupportAdminPermissionsGuard } from '../../guards/support-admin-permiss
 import { Roles } from '../../decorators/roles.decorator';
 import { SupportAdminPermissions } from '../../decorators/support-admin-permissions.decorator';
 import { ROLES } from '../../constants';
+import {
+  LicenseValidationFailure,
+  licenseValidationMessage,
+} from '../constants/license-validation.messages';
 import { LicensesService } from '../services/licenses.service';
 import { CreateLicenseDto } from '../dto/create-license.dto';
 import { UpdateLicenseDto } from '../dto/update-license.dto';
@@ -43,7 +47,9 @@ export class LicensesController {
   @ApiQuery({ name: 'key', required: true })
   validateKey(@Query('key') key: string) {
     if (!key?.trim()) {
-      throw new BadRequestException('License key is required');
+      throw new BadRequestException(
+        licenseValidationMessage(LicenseValidationFailure.KEY_REQUIRED),
+      );
     }
     return this.licensesService.validateKeyPublic(key);
   }
@@ -123,5 +129,13 @@ export class LicensesController {
   @Roles(ROLES.SUPER_ADMIN)
   remove(@Param('id') id: string) {
     return this.licensesService.remove(id);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Post(':id/restore')
+  @Roles(ROLES.SUPER_ADMIN)
+  restore(@Param('id') id: string) {
+    return this.licensesService.restore(id);
   }
 }

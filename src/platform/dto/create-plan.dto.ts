@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsInt,
   IsOptional,
   IsString,
@@ -10,7 +11,7 @@ import {
 } from 'class-validator';
 
 export class CreatePlanDto {
-  @ApiProperty({ example: 'Starter Plus' })
+  @ApiProperty({ example: 'Starter Plus', description: 'Plan Name' })
   @IsString()
   @MinLength(2)
   displayName: string;
@@ -20,20 +21,35 @@ export class CreatePlanDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 25 })
+  @ApiProperty({ example: 25, description: 'Vehicle Limit' })
   @IsInt()
   @Min(1)
   vehicleLimit: number;
 
-  @ApiProperty({ example: 499 })
+  @ApiProperty({ example: 499, description: 'Monthly Price (INR)' })
   @IsInt()
   @Min(0)
   monthlyPriceInr: number;
 
-  @ApiProperty({ example: 4990 })
+  @ApiProperty({ example: 4990, description: 'Yearly Price (INR)' })
   @IsInt()
   @Min(0)
   yearlyPriceInr: number;
+
+  @ApiPropertyOptional({ example: 30, description: 'Data retention in days' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  dataRetentionDays?: number;
+
+  @ApiPropertyOptional({
+    example: 'Email',
+    description: 'Support Type (Community, Email, Chat + Email, …)',
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  supportType?: string;
 
   @ApiPropertyOptional({ example: 2 })
   @IsOptional()
@@ -57,6 +73,11 @@ export class CreatePlanDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @ArrayMaxSize(12)
+  @ArrayMaxSize(20)
   features?: string[];
+
+  @ApiPropertyOptional({ example: true, description: 'Status — active for new subscriptions' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

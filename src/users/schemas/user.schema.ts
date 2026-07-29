@@ -52,6 +52,16 @@ export class User {
 
   @Prop()
   lastLogin?: Date;
+
+  /** Updated on authenticated driver activity (used for 7-day auto logout) */
+  @Prop()
+  lastActivity?: Date;
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

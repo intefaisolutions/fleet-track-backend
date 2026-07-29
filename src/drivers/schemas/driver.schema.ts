@@ -26,6 +26,12 @@ export class Driver {
 
   @Prop({ default: true })
   isActive: boolean;
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const DriverSchema = SchemaFactory.createForClass(Driver);

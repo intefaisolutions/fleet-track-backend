@@ -20,6 +20,10 @@ import { CurrentUser } from '../../decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../types';
 import { PaymentsService } from '../services/payments.service';
 import { SubmitPaymentDto } from '../dto/submit-payment.dto';
+import {
+  CreateRazorpayOrderDto,
+  VerifyRazorpayPaymentDto,
+} from '../dto/razorpay.dto';
 
 @ApiTags('Payments')
 @ApiBearerAuth()
@@ -29,8 +33,8 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('submit')
-  @Roles(ROLES.COMPANY_ADMIN)
-  @ApiOperation({ summary: 'Submit manual payment proof (UPI/bank)' })
+  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  @ApiOperation({ summary: 'Submit manual payment proof (UPI / Bank Transfer)' })
   submit(@Body() dto: SubmitPaymentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.paymentsService.submit(dto, user.companyId!, user.userId);
   }
@@ -66,23 +70,32 @@ export class PaymentsController {
   }
 
   @Post('razorpay/create-order')
-  @Roles(ROLES.COMPANY_ADMIN)
+  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
   @ApiOperation({ summary: 'Create Razorpay order for plan upgrade' })
   createRazorpayOrder(
-    @Body() dto: { planType: string; billingPeriod: string },
+    @Body() dto: CreateRazorpayOrderDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    // Note: cast billingPeriod to BillingPeriod enum in service or validate with DTO
-    return this.paymentsService.createRazorpayOrder(dto.planType, dto.billingPeriod as any, user.companyId!);
+    return this.paymentsService.createRazorpayOrder(
+      dto,
+      user.companyId!,
+      user.userId,
+    );
   }
 
   @Post('razorpay/verify')
-  @Roles(ROLES.COMPANY_ADMIN)
-  @ApiOperation({ summary: 'Verify Razorpay payment and upgrade plan' })
+  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  @ApiOperation({
+    summary: 'Verify Razorpay payment signature and auto-activate subscription',
+  })
   verifyRazorpayPayment(
-    @Body() dto: any, // use VerifyRazorpayPaymentDto if exported
+    @Body() dto: VerifyRazorpayPaymentDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.paymentsService.verifyRazorpayPayment(dto, user.companyId!, user.userId);
+    return this.paymentsService.verifyRazorpayPayment(
+      dto,
+      user.companyId!,
+      user.userId,
+    );
   }
 }

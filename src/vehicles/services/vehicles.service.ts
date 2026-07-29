@@ -2,12 +2,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import { NotificationType, UserRole } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
+import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
+import { NotificationsService } from '../../notifications/services/notifications.service';
+import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Vehicle, VehicleDocument } from '../schemas/vehicle.schema';
 import { CreateVehicleDto } from '../dto/create-vehicle.dto';
 import { UpdateVehicleDto } from '../dto/update-vehicle.dto';
@@ -16,9 +22,18 @@ import {
   Subscription,
   SubscriptionDocument,
 } from '../../subscriptions/schemas/subscription.schema';
+import {
+  restoreUniqueValue,
+  restoreUpdate,
+  softDeleteUpdate,
+  tombstoneUniqueValue,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
 
 @Injectable()
 export class VehiclesService {
+  private readonly logger = new Logger(VehiclesService.name);
+
   constructor(
     @InjectModel(Vehicle.name)
     private readonly vehicleModel: Model<VehicleDocument>,
@@ -26,7 +41,12 @@ export class VehiclesService {
     private readonly companyModel: Model<CompanyDocument>,
     @InjectModel(Subscription.name)
     private readonly subscriptionModel: Model<SubscriptionDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
+    @InjectModel(Driver.name)
+    private readonly driverModel: Model<DriverDocument>,
     private readonly responseService: ResponseService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   private async assertOwnerVehicle(id: string, ownerId: string) {
@@ -74,22 +94,45 @@ export class VehiclesService {
       throw new BadRequestException('Company not found');
     }
     const subscription = await this.subscriptionModel
-      .findOne({ companyId })
+      .findOne(withNotDeleted({ companyId }))
       .lean();
     const planLimit = subscription?.vehicleLimit ?? company.vehicleLimit ?? 5;
 
     if (ownerId) {
-      const ownerCount = await this.vehicleModel.countDocuments({ companyId, ownerId });
+      const ownerCount = await this.vehicleModel.countDocuments(
+        withNotDeleted({ companyId, ownerId }),
+      );
       if (ownerCount >= planLimit) {
+        await this.notifyVehicleLimit(companyId, ownerCount, planLimit);
         throw new BadRequestException(
           `Vehicle limit reached (${ownerCount}/${planLimit}). Upgrade your plan.`,
         );
       }
+      if (ownerCount >= planLimit - 1 && ownerCount < planLimit) {
+        await this.notifyVehicleLimit(companyId, ownerCount + 1, planLimit, true);
+      }
     } else {
-      const vehicleCount = await this.vehicleModel.countDocuments({ companyId });
-      if (vehicleCount >= company.vehicleLimit) {
+      const vehicleCount = await this.vehicleModel.countDocuments(
+        withNotDeleted({ companyId }),
+      );      if (vehicleCount >= company.vehicleLimit) {
+        await this.notifyVehicleLimit(
+          companyId,
+          vehicleCount,
+          company.vehicleLimit,
+        );
         throw new BadRequestException(
           `Vehicle limit reached (${company.vehicleLimit}). Upgrade your plan.`,
+        );
+      }
+      if (
+        vehicleCount >= company.vehicleLimit - 1 &&
+        vehicleCount < company.vehicleLimit
+      ) {
+        await this.notifyVehicleLimit(
+          companyId,
+          vehicleCount + 1,
+          company.vehicleLimit,
+          true,
         );
       }
     }
@@ -103,12 +146,41 @@ export class VehiclesService {
     return this.responseService.created('Vehicle created successfully', created);
   }
 
+  private async notifyVehicleLimit(
+    companyId: string,
+    used: number,
+    limit: number,
+    nearOnly = false,
+  ) {
+    try {
+      const admins = await this.userModel
+        .find(withNotDeleted({ companyId, role: UserRole.COMPANY_ADMIN }))
+        .select('_id')
+        .lean();
+      await this.notificationsService?.notify({
+        userIds: admins.map((a) => a._id.toString()),
+        companyId,
+        type: NotificationType.VEHICLE_LIMIT,
+        title: nearOnly ? 'Vehicle limit almost reached' : 'Vehicle limit reached',
+        message: nearOnly
+          ? `Fleet is at ${used}/${limit} vehicles. Upgrade soon to add more.`
+          : `Vehicle limit reached (${used}/${limit}). Upgrade your plan to add more vehicles.`,
+        entityType: 'company',
+        entityId: companyId,
+        meta: { used, limit },
+        dedupeKey: `vehicle-limit:${companyId}:${used}:${limit}:${nearOnly ? 'near' : 'full'}`,
+      });
+    } catch (err) {
+      this.logger.warn('Vehicle limit notification failed', err);
+    }
+  }
+
   async findAll(companyId?: string, ownerId?: string) {
     const filter: Record<string, unknown> = {};
     if (companyId) filter.companyId = companyId;
     if (ownerId) filter.ownerId = ownerId;
     const items = await this.vehicleModel
-      .find(filter)
+      .find(withNotDeleted(filter))
       .populate('ownerId', 'fullName email')
       .populate('assignedDriverId', 'fullName phone')
       .sort({ createdAt: -1 });
@@ -117,7 +189,7 @@ export class VehiclesService {
 
   async findOne(id: string) {
     const item = await this.vehicleModel
-      .findById(id)
+      .findOne(withNotDeleted({ _id: id }))
       .populate('ownerId', 'fullName email')
       .populate('assignedDriverId', 'fullName phone licenseNumber');
     if (!item) {
@@ -130,10 +202,44 @@ export class VehiclesService {
     if (ownerId) {
       await this.assertOwnerVehicle(id, ownerId);
     }
-    const item = await this.vehicleModel.findByIdAndUpdate(id, dto, { returnDocument: 'after' });
+    const previous = await this.vehicleModel.findById(id);
+    const item = await this.vehicleModel.findByIdAndUpdate(id, dto, {
+      returnDocument: 'after',
+    });
     if (!item) {
       throw new NotFoundException('Vehicle not found');
     }
+
+    if (
+      dto.assignedDriverId &&
+      dto.assignedDriverId !== previous?.assignedDriverId?.toString()
+    ) {
+      try {
+        const driver = await this.driverModel
+          .findById(dto.assignedDriverId)
+          .select('fullName userId');
+        const companyId = item.companyId?.toString();
+        const recipientIds: string[] = [];
+        if (driver?.userId) recipientIds.push(driver.userId.toString());
+        if (item.ownerId) recipientIds.push(item.ownerId.toString());
+        await this.notificationsService?.notify({
+          userIds: recipientIds,
+          companyId,
+          type: NotificationType.DRIVER_ASSIGNMENT,
+          title: 'Driver assigned',
+          message: `${driver?.fullName ?? 'A driver'} was assigned to ${item.registrationNumber}.`,
+          entityType: 'vehicle',
+          entityId: item._id.toString(),
+          meta: {
+            driverId: dto.assignedDriverId,
+            registrationNumber: item.registrationNumber,
+          },
+        });
+      } catch (err) {
+        this.logger.warn('Driver assignment notification failed', err);
+      }
+    }
+
     return this.responseService.success('Vehicle updated successfully', item);
   }
 
@@ -149,6 +255,31 @@ export class VehiclesService {
     if (!item) {
       throw new NotFoundException('Vehicle not found');
     }
+
+    try {
+      const driver = await this.driverModel.findById(dto.driverId).select('fullName userId');
+      const companyId = item.companyId?.toString();
+      const recipientIds: string[] = [];
+      if (driver?.userId) recipientIds.push(driver.userId.toString());
+      if (item.ownerId) recipientIds.push(item.ownerId.toString());
+
+      await this.notificationsService?.notify({
+        userIds: recipientIds,
+        companyId,
+        type: NotificationType.DRIVER_ASSIGNMENT,
+        title: 'Driver assigned',
+        message: `${driver?.fullName ?? 'A driver'} was assigned to ${item.registrationNumber}.`,
+        entityType: 'vehicle',
+        entityId: item._id.toString(),
+        meta: {
+          driverId: dto.driverId,
+          registrationNumber: item.registrationNumber,
+        },
+      });
+    } catch (err) {
+      this.logger.warn('Driver assignment notification failed', err);
+    }
+
     return this.responseService.success('Driver assigned successfully', item);
   }
 
@@ -156,10 +287,43 @@ export class VehiclesService {
     if (ownerId) {
       await this.assertOwnerVehicle(id, ownerId);
     }
-    const item = await this.vehicleModel.findByIdAndDelete(id);
-    if (!item) {
+    const existing = await this.vehicleModel.findOne(
+      withNotDeleted({ _id: id }),
+    );
+    if (!existing) {
       throw new NotFoundException('Vehicle not found');
     }
-    return this.responseService.success('Vehicle deleted successfully');
+    const item = await this.vehicleModel.findByIdAndUpdate(
+      id,
+      softDeleteUpdate({
+        registrationNumber: tombstoneUniqueValue(
+          existing.registrationNumber,
+          id,
+        ),
+      }),
+      { returnDocument: 'after' },
+    );
+    return this.responseService.success('Vehicle deleted successfully', item);
+  }
+
+  async restore(id: string) {
+    const existing = await this.vehicleModel.findOne({
+      _id: id,
+      isDeleted: true,
+    });
+    if (!existing) {
+      throw new NotFoundException('Deleted vehicle not found');
+    }
+    const item = await this.vehicleModel.findByIdAndUpdate(
+      id,
+      restoreUpdate({
+        registrationNumber: restoreUniqueValue(
+          existing.registrationNumber,
+          id,
+        ),
+      }),
+      { returnDocument: 'after' },
+    );
+    return this.responseService.success('Vehicle restored successfully', item);
   }
 }

@@ -58,6 +58,12 @@ export class License {
 
   @Prop({ trim: true })
   notes?: string;
+
+  @Prop({ default: false, index: true })
+  isDeleted: boolean;
+
+  @Prop({ type: Date, default: null })
+  deletedAt?: Date | null;
 }
 
 export const LicenseSchema = SchemaFactory.createForClass(License);

@@ -10,6 +10,12 @@ import { SubscriptionPlan, SubscriptionPlanDocument } from '../../platform/schem
 import { Payment, PaymentDocument } from '../../payments/schemas/payment.schema';
 import { CreateSubscriptionDto } from '../dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from '../dto/update-subscription.dto';
+import {
+  restoreUpdate,
+  softDeleteUpdate,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
+import { SubscriptionStatus } from '../../common/enums';
 
 @Injectable()
 export class SubscriptionsService {
@@ -179,12 +185,14 @@ export class SubscriptionsService {
 
   async findAll(companyId?: string) {
     const filter = companyId ? { companyId } : {};
-    const items = await this.subModel.find(filter).sort({ createdAt: -1 });
+    const items = await this.subModel
+      .find(withNotDeleted(filter))
+      .sort({ createdAt: -1 });
     return this.responseService.success('Subscriptions fetched successfully', items);
   }
 
   async findOne(id: string) {
-    const item = await this.subModel.findById(id);
+    const item = await this.subModel.findOne(withNotDeleted({ _id: id }));
     if (!item) {
       throw new NotFoundException('Subscription not found');
     }
@@ -192,9 +200,13 @@ export class SubscriptionsService {
   }
 
   async update(id: string, dto: UpdateSubscriptionDto) {
-    const item = await this.subModel.findByIdAndUpdate(id, dto, {
-      returnDocument: 'after',
-    });
+    const item = await this.subModel.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      dto,
+      {
+        returnDocument: 'after',
+      },
+    );
     if (!item) {
       throw new NotFoundException('Subscription not found');
     }
@@ -202,11 +214,30 @@ export class SubscriptionsService {
   }
 
   async remove(id: string) {
-    const item = await this.subModel.findByIdAndDelete(id);
+    const item = await this.subModel.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      softDeleteUpdate({
+        status: SubscriptionStatus.CANCELLED,
+        cancelledAt: new Date(),
+      }),
+      { returnDocument: 'after' },
+    );
     if (!item) {
       throw new NotFoundException('Subscription not found');
     }
-    return this.responseService.success('Subscription deleted successfully');
+    return this.responseService.success('Subscription deleted successfully', item);
+  }
+
+  async restore(id: string) {
+    const item = await this.subModel.findOneAndUpdate(
+      { _id: id, isDeleted: true },
+      restoreUpdate({ status: SubscriptionStatus.ACTIVE }),
+      { returnDocument: 'after' },
+    );
+    if (!item) {
+      throw new NotFoundException('Deleted subscription not found');
+    }
+    return this.responseService.success('Subscription restored successfully', item);
   }
 
   async previewPlanChange(companyId: string, newPlanId: string) {

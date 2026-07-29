@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -32,6 +33,10 @@ import {
 } from '../../subscriptions/schemas/subscription.schema';
 import { ResponseService } from '../../common/responses/response.service';
 import {
+  softDeleteUpdate,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
+import {
   PlatformSettings,
   PlatformSettingsDocument,
 } from '../schemas/platform-settings.schema';
@@ -40,7 +45,7 @@ import {
   SubscriptionPlanDocument,
 } from '../schemas/subscription-plan.schema';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
-import { UpdatePlanPricingDto } from '../dto/update-plan-pricing.dto';
+import { UpdatePlanDto } from '../dto/update-plan.dto';
 import { CreatePlanDto } from '../dto/create-plan.dto';
 
 @Injectable()
@@ -84,6 +89,10 @@ export class PlatformService implements OnModuleInit {
       .slice(0, 48);
   }
 
+  /**
+   * Seed SRS default plans once. Does NOT overwrite admin edits on restart
+   * (prices, names, features, active status stay as managed in DB).
+   */
   private async seedPlans() {
     for (const planType of Object.values(SubscriptionPlanType)) {
       const limits = DEFAULT_PLAN_LIMITS[planType];
@@ -91,15 +100,15 @@ export class PlatformService implements OnModuleInit {
       await this.planModel.findOneAndUpdate(
         { planType },
         {
-          $set: {
+          $setOnInsert: {
+            planType,
             displayName: marketing.displayName,
             description: marketing.description,
             features: marketing.features,
+            supportType: marketing.supportType,
+            dataRetentionDays: marketing.dataRetentionDays,
             isSystem: true,
             isActive: true,
-          },
-          $setOnInsert: {
-            planType,
             vehicleLimit: limits.vehicleLimit,
             maxAdmins: limits.maxAdmins,
             maxOwners: limits.maxOwners,
@@ -109,6 +118,26 @@ export class PlatformService implements OnModuleInit {
           },
         },
         { upsert: true },
+      );
+
+      // Backfill new catalog fields on legacy docs without wiping custom edits
+      await this.planModel.updateOne(
+        {
+          planType,
+          $or: [
+            { supportType: { $exists: false } },
+            { supportType: null },
+            { supportType: '' },
+            { dataRetentionDays: { $exists: false } },
+            { dataRetentionDays: null },
+          ],
+        },
+        {
+          $set: {
+            supportType: marketing.supportType,
+            dataRetentionDays: marketing.dataRetentionDays,
+          },
+        },
       );
     }
   }
@@ -129,8 +158,10 @@ export class PlatformService implements OnModuleInit {
       displayName: dto.displayName.trim(),
       description: dto.description?.trim(),
       features: (dto.features ?? []).map((f) => f.trim()).filter(Boolean),
+      supportType: (dto.supportType ?? 'Email').trim(),
+      dataRetentionDays: dto.dataRetentionDays ?? 30,
       isSystem: false,
-      isActive: true,
+      isActive: dto.isActive ?? true,
       vehicleLimit: dto.vehicleLimit,
       monthlyPriceInr: dto.monthlyPriceInr,
       yearlyPriceInr: dto.yearlyPriceInr,
@@ -142,22 +173,115 @@ export class PlatformService implements OnModuleInit {
     return this.responseService.created('Subscription plan created successfully', created);
   }
 
+  /** Public / upgrade catalog — active plans only */
   async getPlans() {
-    const plans = await this.planModel.find({ isActive: true }).sort({ monthlyPriceInr: 1 });
+    const plans = await this.planModel
+      .find(withNotDeleted({ isActive: true }))
+      .sort({ monthlyPriceInr: 1 });
     return this.responseService.success('Subscription plans fetched', plans);
   }
 
-  async updatePlanPricing(planType: string, dto: UpdatePlanPricingDto) {
+  /** Full catalog update — does not change existing company subscriptions */
+  async updatePlan(planType: string, dto: UpdatePlanDto) {
     const normalized = planType.toUpperCase().trim();
+    const update: Record<string, unknown> = {};
+
+    if (dto.displayName !== undefined) update.displayName = dto.displayName.trim();
+    if (dto.description !== undefined) update.description = dto.description.trim();
+    if (dto.monthlyPriceInr !== undefined) update.monthlyPriceInr = dto.monthlyPriceInr;
+    if (dto.yearlyPriceInr !== undefined) update.yearlyPriceInr = dto.yearlyPriceInr;
+    if (dto.vehicleLimit !== undefined) update.vehicleLimit = dto.vehicleLimit;
+    if (dto.dataRetentionDays !== undefined) {
+      update.dataRetentionDays = dto.dataRetentionDays;
+    }
+    if (dto.supportType !== undefined) update.supportType = dto.supportType.trim();
+    if (dto.maxAdmins !== undefined) update.maxAdmins = dto.maxAdmins;
+    if (dto.maxOwners !== undefined) update.maxOwners = dto.maxOwners;
+    if (dto.maxDrivers !== undefined) update.maxDrivers = dto.maxDrivers;
+    if (dto.isActive !== undefined) update.isActive = dto.isActive;
+    if (dto.features !== undefined) {
+      update.features = dto.features.map((f) => f.trim()).filter(Boolean);
+    }
+
+    if (Object.keys(update).length === 0) {
+      throw new BadRequestException('No fields to update');
+    }
+
     const plan = await this.planModel.findOneAndUpdate(
       { planType: normalized },
-      { ...dto },
+      { $set: update },
       { returnDocument: 'after' },
     );
     if (!plan) {
-      throw new BadRequestException('Plan not found');
+      throw new NotFoundException('Plan not found');
     }
-    return this.responseService.success('Plan pricing updated', plan);
+    return this.responseService.success(
+      'Plan updated. Existing subscribers keep their current subscription.',
+      plan,
+    );
+  }
+
+  /** @deprecated Prefer updatePlan — kept for older clients that only patch prices */
+  async updatePlanPricing(planType: string, dto: UpdatePlanDto) {
+    return this.updatePlan(planType, dto);
+  }
+
+  async setPlanStatus(planType: string, isActive: boolean) {
+    const normalized = planType.toUpperCase().trim();
+    const plan = await this.planModel.findOneAndUpdate(
+      { planType: normalized },
+      { $set: { isActive } },
+      { returnDocument: 'after' },
+    );
+    if (!plan) {
+      throw new NotFoundException('Plan not found');
+    }
+    return this.responseService.success(
+      isActive
+        ? 'Plan enabled for new subscriptions'
+        : 'Plan disabled for new subscriptions. Existing subscribers are unaffected.',
+      plan,
+    );
+  }
+
+  /**
+   * Delete a custom plan. System plans cannot be deleted (disable instead).
+   * Blocks delete when any company still references the planType so subscribers
+   * never lose their subscription record.
+   */
+  async deletePlan(planType: string) {
+    const normalized = planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType: normalized });
+    if (!plan) {
+      throw new NotFoundException('Plan not found');
+    }
+    if (plan.isSystem) {
+      throw new BadRequestException(
+        'System plans cannot be deleted. Disable the plan instead.',
+      );
+    }
+
+    const [companyCount, subCount, licenseCount] = await Promise.all([
+      this.companyModel.countDocuments({ planType: normalized }),
+      this.subscriptionModel.countDocuments({ planType: normalized }),
+      this.licenseModel.countDocuments({ planType: normalized }),
+    ]);
+
+    if (companyCount > 0 || subCount > 0 || licenseCount > 0) {
+      throw new BadRequestException(
+        `Cannot delete plan "${normalized}" while it is used by ${companyCount} compan${companyCount === 1 ? 'y' : 'ies'}, ${subCount} subscription(s), or ${licenseCount} license(s). Disable it instead so existing subscribers keep access.`,
+      );
+    }
+
+    await this.planModel.findByIdAndUpdate(
+      plan._id,
+      softDeleteUpdate({
+        planType: `${normalized}__del_${plan._id.toString()}`,
+      }),
+    );
+    return this.responseService.success('Subscription plan deleted', {
+      planType: normalized,
+    });
   }
 
   async getPricingOverview() {
@@ -165,7 +289,7 @@ export class PlatformService implements OnModuleInit {
 
     const [plans, settings, activeSubscriptions, pendingTransitions, canceledLast30Days] =
       await Promise.all([
-        this.planModel.find({ isActive: true }).sort({ monthlyPriceInr: 1 }),
+        this.planModel.find(withNotDeleted({})).sort({ monthlyPriceInr: 1 }),
         this.settingsModel.findOne({ key: 'PLATFORM' }),
         this.subscriptionModel.countDocuments({ status: SubscriptionStatus.ACTIVE }),
         this.paymentModel.countDocuments({

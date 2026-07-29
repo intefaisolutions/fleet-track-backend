@@ -101,4 +101,10 @@ export class VehiclesController {
       user.role === ROLES.VEHICLE_OWNER ? user.userId : undefined;
     return this.vehiclesService.remove(id, ownerId);
   }
+
+  @Post(':id/restore')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
+  restore(@Param('id') id: string) {
+    return this.vehiclesService.restore(id);
+  }
 }

@@ -66,6 +66,7 @@ export class AuthService {
       isEmailVerified: user.isEmailVerified,
       companyId: user.companyId,
       lastLogin: user.lastLogin,
+      lastActivity: user.lastActivity,
       permissions: isSupportAdmin
         ? (user.permissions ?? [])
         : (ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? []),
@@ -150,7 +151,9 @@ export class AuthService {
       tokens.refreshTokenHash,
     );
 
-    user.lastLogin = new Date();
+    const now = new Date();
+    user.lastLogin = now;
+    user.lastActivity = now;
     await user.save();
 
     const licenseNotice = user.companyId
@@ -159,9 +162,19 @@ export class AuthService {
         )
       : null;
 
+    const requiresLicenseActivation =
+      user.role === UserRole.COMPANY_ADMIN && user.companyId
+        ? await this.licensesService.companyRequiresLicenseActivation(
+            user.companyId.toString(),
+          )
+        : false;
+
     return this.responseService.success('Login successful', {
       ...tokens,
-      user: this.sanitizeUser(user),
+      user: {
+        ...this.sanitizeUser(user),
+        requiresLicenseActivation,
+      },
       ...(licenseNotice ? { licenseNotice } : {}),
     });
   }
@@ -244,12 +257,24 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token revoked or invalid');
     }
 
+    // Drivers: reject refresh after 7 days of inactivity
+    if (this.usersService.isDriverInactive(user)) {
+      await this.usersService.updateRefreshToken(user._id.toString(), null);
+      throw new UnauthorizedException(
+        'Session expired due to 7 days of inactivity. Please login again.',
+      );
+    }
+
     const tokens = await this.tokenService.generateTokenPair(user);
 
     await this.usersService.updateRefreshToken(
       user._id.toString(),
       tokens.refreshTokenHash,
     );
+
+    if (user.role === UserRole.DRIVER) {
+      await this.usersService.touchDriverActivityIfNeeded(user._id.toString(), 0);
+    }
 
     return this.responseService.success('Token refreshed', {
       accessToken: tokens.accessToken,
@@ -357,13 +382,24 @@ export class AuthService {
     const result = await this.usersService.findOne(userId);
 
     if (result.data) {
-      const user = result.data as unknown as { role: string };
+      const user = result.data as unknown as {
+        role: string;
+        companyId?: string | { toString(): string };
+        permissions?: string[];
+      };
+      const companyId = user.companyId ? String(user.companyId) : undefined;
+      const requiresLicenseActivation =
+        user.role === UserRole.COMPANY_ADMIN && companyId
+          ? await this.licensesService.companyRequiresLicenseActivation(companyId)
+          : false;
+
       return this.responseService.success('Profile fetched successfully', {
         ...JSON.parse(JSON.stringify(result.data)),
         permissions:
           user.role === UserRole.SUPPORT_ADMIN
-            ? (((result.data as unknown as { permissions?: string[] }).permissions) ?? [])
+            ? (user.permissions ?? [])
             : (ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? []),
+        requiresLicenseActivation,
       });
     }
 

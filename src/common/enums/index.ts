@@ -56,6 +56,13 @@ export enum PaymentVerificationStatus {
   REJECTED = 'REJECTED',
 }
 
+/** How the customer chose to pay for a subscription upgrade */
+export enum PaymentMethodType {
+  RAZORPAY = 'RAZORPAY',
+  UPI = 'UPI',
+  BANK_TRANSFER = 'BANK_TRANSFER',
+}
+
 export enum BillingPeriod {
   MONTHLY = 'MONTHLY',
   YEARLY = 'YEARLY',
@@ -95,11 +102,26 @@ export enum ExpenseCategory {
   OTHER = 'OTHER',
 }
 
+/** In-app / push notification event types */
 export enum NotificationType {
-  ALERT = 'ALERT',
-  REMINDER = 'REMINDER',
+  INSURANCE_EXPIRY = 'INSURANCE_EXPIRY',
+  PUC_EXPIRY = 'PUC_EXPIRY',
+  LICENSE_EXPIRY = 'LICENSE_EXPIRY',
+  PAYMENT_VERIFICATION = 'PAYMENT_VERIFICATION',
+  VEHICLE_LIMIT = 'VEHICLE_LIMIT',
+  DRIVER_ASSIGNMENT = 'DRIVER_ASSIGNMENT',
+  REPAIR_REQUEST = 'REPAIR_REQUEST',
   SYSTEM = 'SYSTEM',
-  TRACKING = 'TRACKING',
-  PAYMENT = 'PAYMENT',
-  LICENSE = 'LICENSE',
+}
+
+export enum NotificationPushStatus {
+  PENDING = 'PENDING',
+  SENT = 'SENT',
+  SKIPPED = 'SKIPPED',
+  FAILED = 'FAILED',
+}
+
+export enum NotificationChannel {
+  IN_APP = 'IN_APP',
+  PUSH = 'PUSH',
 }

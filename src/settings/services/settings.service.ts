@@ -5,6 +5,11 @@ import { ResponseService } from '../../common/responses/response.service';
 import { Setting, SettingDocument } from '../schemas/setting.schema';
 import { CreateSettingDto } from '../dto/create-setting.dto';
 import { UpdateSettingDto } from '../dto/update-setting.dto';
+import {
+  restoreUpdate,
+  softDeleteUpdate,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
 
 @Injectable()
 export class SettingsService {
@@ -24,12 +29,14 @@ export class SettingsService {
 
   async findAll(companyId?: string) {
     const filter = companyId ? { companyId } : {};
-    const items = await this.Model.find(filter).sort({ createdAt: -1 });
+    const items = await this.Model.find(withNotDeleted(filter)).sort({
+      createdAt: -1,
+    });
     return this.responseService.success('Settings fetched successfully', items);
   }
 
   async findOne(id: string) {
-    const item = await this.Model.findById(id);
+    const item = await this.Model.findOne(withNotDeleted({ _id: id }));
     if (!item) {
       throw new NotFoundException('Setting not found');
     }
@@ -37,9 +44,13 @@ export class SettingsService {
   }
 
   async update(id: string, dto: UpdateSettingDto) {
-    const item = await this.Model.findByIdAndUpdate(id, dto, {
-      returnDocument: 'after',
-    });
+    const item = await this.Model.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      dto,
+      {
+        returnDocument: 'after',
+      },
+    );
     if (!item) {
       throw new NotFoundException('Setting not found');
     }
@@ -47,10 +58,26 @@ export class SettingsService {
   }
 
   async remove(id: string) {
-    const item = await this.Model.findByIdAndDelete(id);
+    const item = await this.Model.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      softDeleteUpdate(),
+      { returnDocument: 'after' },
+    );
     if (!item) {
       throw new NotFoundException('Setting not found');
     }
-    return this.responseService.success('Setting deleted successfully');
+    return this.responseService.success('Setting deleted successfully', item);
+  }
+
+  async restore(id: string) {
+    const item = await this.Model.findOneAndUpdate(
+      { _id: id, isDeleted: true },
+      restoreUpdate(),
+      { returnDocument: 'after' },
+    );
+    if (!item) {
+      throw new NotFoundException('Deleted setting not found');
+    }
+    return this.responseService.success('Setting restored successfully', item);
   }
 }

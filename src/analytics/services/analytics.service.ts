@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ResponseService } from '../../common/responses/response.service';
+import { withNotDeleted } from '../../common/utils/soft-delete.util';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
 import { Expense, ExpenseDocument } from '../../expenses/schemas/expense.schema';
@@ -16,7 +17,7 @@ export class AnalyticsService {
   ) {}
 
   async getDashboard(companyId?: string) {
-    const filter = companyId ? { companyId } : {};
+    const filter = withNotDeleted(companyId ? { companyId } : {});
 
     const [totalVehicles, activeDrivers, totalExpenses] = await Promise.all([
       this.vehicleModel.countDocuments(filter),

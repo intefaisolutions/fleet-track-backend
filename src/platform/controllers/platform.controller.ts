@@ -10,7 +10,8 @@ import { SupportAdminPermissions } from '../../decorators/support-admin-permissi
 import { ROLES } from '../../constants';
 import { PlatformService } from '../services/platform.service';
 import { UpdatePlatformSettingsDto } from '../dto/update-platform-settings.dto';
-import { UpdatePlanPricingDto } from '../dto/update-plan-pricing.dto';
+import { UpdatePlanDto } from '../dto/update-plan.dto';
+import { UpdatePlanStatusDto } from '../dto/update-plan-status.dto';
 import { CreatePlanDto } from '../dto/create-plan.dto';
 import { AddSupportAdminDto, UpdateSupportAdminPermissionsDto } from '../dto/support-admin.dto';
 
@@ -76,7 +77,7 @@ export class PlatformController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Post('plans')
   @Roles(ROLES.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Create a custom subscription plan (Super Admin)' })
+  @ApiOperation({ summary: 'Create a subscription plan (Super Admin)' })
   createPlan(@Body() dto: CreatePlanDto) {
     return this.platformService.createPlan(dto);
   }
@@ -85,8 +86,36 @@ export class PlatformController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Patch('plans/:planType')
   @Roles(ROLES.SUPER_ADMIN)
-  updatePlan(@Param('planType') planType: string, @Body() dto: UpdatePlanPricingDto) {
-    return this.platformService.updatePlanPricing(planType, dto);
+  @ApiOperation({
+    summary:
+      'Update plan catalog fields (prices, limits, features, etc.). Existing subscribers keep their plan.',
+  })
+  updatePlan(@Param('planType') planType: string, @Body() dto: UpdatePlanDto) {
+    return this.platformService.updatePlan(planType, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Patch('plans/:planType/status')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Enable or disable a plan for new subscriptions' })
+  setPlanStatus(
+    @Param('planType') planType: string,
+    @Body() dto: UpdatePlanStatusDto,
+  ) {
+    return this.platformService.setPlanStatus(planType, dto.isActive);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Delete('plans/:planType')
+  @Roles(ROLES.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'Delete a custom plan (blocked if any company/subscription still uses it)',
+  })
+  deletePlan(@Param('planType') planType: string) {
+    return this.platformService.deletePlan(planType);
   }
 
   @ApiBearerAuth()

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { AppUrls } from '../common/utils/app-urls.util';
+import { renderCompanyWelcomeEmail } from './templates/company-welcome.template';
 
 @Injectable()
 export class MailService {
@@ -173,6 +174,77 @@ export class MailService {
       this.logger.error(`Failed to send license email to ${to}`, err);
       throw err;
     }
+  }
+
+  /**
+   * Welcome email after successful company registration (and resend on activation screen).
+   * Includes company name, license key, login URL, and login instructions.
+   */
+  async sendCompanyWelcomeEmail(params: {
+    to: string;
+    companyName: string;
+    adminName: string;
+    licenseKey: string;
+    planType?: string;
+    validUntil?: string;
+  }): Promise<boolean> {
+    const { to, companyName, adminName, licenseKey, planType, validUntil } = params;
+    const enabled = this.configService.get<boolean>('mail.enabled');
+    if (!enabled || !this.isConfigured()) {
+      this.logger.warn(
+        `SMTP not configured; company welcome email for ${to} (company="${companyName}") not sent`,
+      );
+      return false;
+    }
+
+    const fromName = this.configService.get<string>('mail.fromName');
+    const from = this.configService.get<string>('mail.from');
+    const appName = this.configService.get<string>('app.name') || 'FleetTrack';
+    const loginUrl = this.appUrls.signIn || 'http://192.168.1.9:5173/signin';
+
+    const { subject, text, html } = renderCompanyWelcomeEmail({
+      appName,
+      adminName,
+      companyName,
+      licenseKey,
+      loginUrl,
+      planType,
+      validUntil,
+    });
+
+    try {
+      await this.getTransporter().sendMail({
+        from: `"${fromName}" <${from}>`,
+        to,
+        subject,
+        text,
+        html,
+      });
+      this.logger.log(
+        `Company welcome email sent to ${to} (company="${companyName}")`,
+      );
+      return true;
+    } catch (err) {
+      this.logger.error(
+        `Failed to send company welcome email to ${to} (company="${companyName}")`,
+        err instanceof Error ? err.stack : err,
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * @deprecated Prefer sendCompanyWelcomeEmail — kept for callers that used the activation name.
+   */
+  async sendCompanyActivationEmail(params: {
+    to: string;
+    companyName: string;
+    adminName: string;
+    licenseKey: string;
+    planType: string;
+    validUntil: string;
+  }): Promise<boolean> {
+    return this.sendCompanyWelcomeEmail(params);
   }
 
   /** Login credentials when a company admin creates a vehicle owner or driver. */

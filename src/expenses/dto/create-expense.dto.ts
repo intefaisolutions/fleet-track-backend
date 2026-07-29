@@ -52,4 +52,13 @@ export class CreateExpenseDto {
   @IsOptional()
   @IsObject()
   categoryDetails?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description:
+      'Client-generated UUID for offline draft sync (dedupe on retry)',
+    example: 'draft_1710000000000_abc123',
+  })
+  @IsOptional()
+  @IsString()
+  clientRequestId?: string;
 }

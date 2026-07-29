@@ -57,4 +57,10 @@ export class DriversController {
   remove(@Param('id') id: string) {
     return this.sService.remove(id);
   }
+
+  @Post(':id/restore')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
+  restore(@Param('id') id: string) {
+    return this.sService.restore(id);
+  }
 }

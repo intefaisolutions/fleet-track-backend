@@ -1,32 +1,50 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as crypto from 'crypto';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const Razorpay = require('razorpay');
 import {
   BillingPeriod,
+  NotificationType,
+  PaymentMethodType,
   PaymentVerificationStatus,
+  SubscriptionPlanType,
   SubscriptionStatus,
+  UserRole,
 } from '../../common/enums';
 import { DEFAULT_PLAN_LIMITS } from '../../common/constants/plan-limits.constant';
-import { SubscriptionPlanType } from '../../common/enums';
 import {
   SubscriptionPlan,
   SubscriptionPlanDocument,
 } from '../../platform/schemas/subscription-plan.schema';
 import { ResponseService } from '../../common/responses/response.service';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
-import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
+import {
+  Subscription,
+  SubscriptionDocument,
+} from '../../subscriptions/schemas/subscription.schema';
 import { SubscriptionsService } from '../../subscriptions/services/subscriptions.service';
+import { NotificationsService } from '../../notifications/services/notifications.service';
+import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Payment, PaymentDocument } from '../schemas/payment.schema';
 import { SubmitPaymentDto } from '../dto/submit-payment.dto';
+import {
+  CreateRazorpayOrderDto,
+  VerifyRazorpayPaymentDto,
+} from '../dto/razorpay.dto';
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     @InjectModel(Payment.name)
     private readonly paymentModel: Model<PaymentDocument>,
@@ -36,14 +54,42 @@ export class PaymentsService {
     private readonly subscriptionModel: Model<SubscriptionDocument>,
     @InjectModel(SubscriptionPlan.name)
     private readonly planModel: Model<SubscriptionPlanDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly responseService: ResponseService,
     private readonly subscriptionsService: SubscriptionsService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
+  private async superAdminIds(): Promise<string[]> {
+    const admins = await this.userModel
+      .find({ role: UserRole.SUPER_ADMIN })
+      .select('_id')
+      .lean();
+    return admins.map((a) => a._id.toString());
+  }
+
+  private async companyAdminIds(companyId: string): Promise<string[]> {
+    const admins = await this.userModel
+      .find({ companyId, role: UserRole.COMPANY_ADMIN })
+      .select('_id')
+      .lean();
+    return admins.map((a) => a._id.toString());
+  }
+
+  private assertRazorpayConfigured() {
+    if (!process.env.RAZORPAY_KEY_ID?.trim() || !process.env.RAZORPAY_KEY_SECRET?.trim()) {
+      throw new ServiceUnavailableException(
+        'Razorpay is not configured. Please use Manual UPI or Bank Transfer, or contact support.',
+      );
+    }
+  }
+
   private get razorpayInstance() {
+    this.assertRazorpayConfigured();
     return new Razorpay({
-      key_id: process.env.RAZORPAY_KEY_ID || '',
-      key_secret: process.env.RAZORPAY_KEY_SECRET || '',
+      key_id: process.env.RAZORPAY_KEY_ID,
+      key_secret: process.env.RAZORPAY_KEY_SECRET,
     });
   }
 
@@ -56,14 +102,57 @@ export class PaymentsService {
         maxAdmins: plan.maxAdmins,
         maxOwners: plan.maxOwners,
         maxDrivers: plan.maxDrivers,
+        planId: plan._id as Types.ObjectId,
       };
     }
 
-    const fallback =
-      DEFAULT_PLAN_LIMITS[normalized as SubscriptionPlanType];
-    if (fallback) return fallback;
+    const fallback = DEFAULT_PLAN_LIMITS[normalized as SubscriptionPlanType];
+    if (fallback) {
+      return { ...fallback, planId: undefined as Types.ObjectId | undefined };
+    }
 
     throw new BadRequestException(`Plan "${normalized}" not found`);
+  }
+
+  /**
+   * Apply plan limits to company + upsert ACTIVE subscription.
+   * Does not change an already-verified payment document.
+   * Existing subscribers keep access; this only upgrades after a successful payment.
+   */
+  private async activateCompanyPlan(
+    companyId: Types.ObjectId | string,
+    planType: string,
+    billingPeriod: BillingPeriod,
+    planId?: Types.ObjectId,
+  ) {
+    const limits = await this.resolvePlanLimits(planType);
+    const periodEnd = new Date();
+    if (billingPeriod === BillingPeriod.YEARLY) {
+      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+    } else {
+      periodEnd.setMonth(periodEnd.getMonth() + 1);
+    }
+
+    await this.companyModel.findByIdAndUpdate(companyId, {
+      planType,
+      vehicleLimit: limits.vehicleLimit,
+      maxAdmins: limits.maxAdmins,
+      maxOwners: limits.maxOwners,
+      maxDrivers: limits.maxDrivers,
+    });
+
+    await this.subscriptionModel.findOneAndUpdate(
+      { companyId },
+      {
+        planType,
+        planId: planId ?? limits.planId,
+        status: SubscriptionStatus.ACTIVE,
+        vehicleLimit: limits.vehicleLimit,
+        billingPeriod,
+        currentPeriodEnd: periodEnd,
+      },
+      { upsert: true },
+    );
   }
 
   async submit(dto: SubmitPaymentDto, companyId: string, userId: string) {
@@ -71,15 +160,52 @@ export class PaymentsService {
       throw new BadRequestException('companyId is required');
     }
 
+    const method = dto.paymentMethod ?? PaymentMethodType.UPI;
+    if (
+      method !== PaymentMethodType.UPI &&
+      method !== PaymentMethodType.BANK_TRANSFER
+    ) {
+      throw new BadRequestException(
+        'Manual submit only supports UPI or Bank Transfer. Use Razorpay checkout for online payments.',
+      );
+    }
+
     const created = await this.paymentModel.create({
-      ...dto,
+      planType: dto.planType.toUpperCase().trim(),
+      billingPeriod: dto.billingPeriod ?? BillingPeriod.MONTHLY,
+      amount: dto.amount,
+      transactionId: dto.transactionId.trim(),
+      notes: dto.notes?.trim(),
+      paymentMethod: method,
+      paymentGateway: 'MANUAL',
       companyId,
       submittedBy: userId,
       status: PaymentVerificationStatus.PENDING,
     });
 
+    try {
+      const company = await this.companyModel.findById(companyId).select('name');
+      const adminIds = await this.superAdminIds();
+      await this.notificationsService?.notify({
+        userIds: adminIds,
+        companyId,
+        type: NotificationType.PAYMENT_VERIFICATION,
+        title: 'Payment pending verification',
+        message: `${company?.name ?? 'A company'} submitted a payment of ₹${dto.amount} (${dto.planType}).`,
+        entityType: 'payment',
+        entityId: created._id.toString(),
+        meta: {
+          amount: dto.amount,
+          planType: dto.planType,
+          status: PaymentVerificationStatus.PENDING,
+        },
+      });
+    } catch (err) {
+      this.logger.warn('Payment notification failed', err);
+    }
+
     return this.responseService.created(
-      'Payment submitted. Awaiting Company Owner verification.',
+      'Payment submitted. Awaiting verification. Your plan will activate after approval.',
       created,
     );
   }
@@ -109,33 +235,29 @@ export class PaymentsService {
     payment.verifiedAt = new Date();
     await payment.save();
 
-    const limits = await this.resolvePlanLimits(payment.planType || '');
-    await this.companyModel.findByIdAndUpdate(payment.companyId, {
-      planType: payment.planType,
-      vehicleLimit: limits.vehicleLimit,
-      maxAdmins: limits.maxAdmins,
-      maxOwners: limits.maxOwners,
-      maxDrivers: limits.maxDrivers,
-    });
-
-    const periodEnd = new Date();
-    if (payment.billingPeriod === BillingPeriod.YEARLY) {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
-
-    await this.subscriptionModel.findOneAndUpdate(
-      { companyId: payment.companyId },
-      {
-        planType: payment.planType,
-        status: SubscriptionStatus.ACTIVE,
-        vehicleLimit: limits.vehicleLimit,
-        billingPeriod: payment.billingPeriod,
-        currentPeriodEnd: periodEnd,
-      },
-      { upsert: true },
+    await this.activateCompanyPlan(
+      payment.companyId,
+      payment.planType || '',
+      payment.billingPeriod ?? BillingPeriod.MONTHLY,
+      payment.planId,
     );
+
+    try {
+      const companyId = payment.companyId.toString();
+      const adminIds = await this.companyAdminIds(companyId);
+      await this.notificationsService?.notify({
+        userIds: adminIds,
+        companyId,
+        type: NotificationType.PAYMENT_VERIFICATION,
+        title: 'Payment verified',
+        message: `Your payment of ₹${payment.amount} was verified. Plan upgraded.`,
+        entityType: 'payment',
+        entityId: payment._id.toString(),
+        meta: { status: PaymentVerificationStatus.VERIFIED, amount: payment.amount },
+      });
+    } catch (err) {
+      this.logger.warn('Payment verify notification failed', err);
+    }
 
     return this.responseService.success('Payment verified and plan upgraded', payment);
   }
@@ -152,49 +274,114 @@ export class PaymentsService {
       { returnDocument: 'after' },
     );
     if (!payment) throw new NotFoundException('Payment not found');
+
+    try {
+      const companyId = payment.companyId.toString();
+      const adminIds = await this.companyAdminIds(companyId);
+      await this.notificationsService?.notify({
+        userIds: adminIds,
+        companyId,
+        type: NotificationType.PAYMENT_VERIFICATION,
+        title: 'Payment rejected',
+        message: rejectionReason
+          ? `Your payment was rejected: ${rejectionReason}`
+          : 'Your payment was rejected. Please contact support.',
+        entityType: 'payment',
+        entityId: payment._id.toString(),
+        meta: { status: PaymentVerificationStatus.REJECTED },
+      });
+    } catch (err) {
+      this.logger.warn('Payment reject notification failed', err);
+    }
+
     return this.responseService.success('Payment rejected', payment);
   }
 
-  async createRazorpayOrder(planType: string, billingPeriod: BillingPeriod, companyId: string) {
-    const normalized = planType.toUpperCase().trim();
-    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
-    if (!plan) throw new BadRequestException(`Plan "${normalized}" not found or inactive`);
+  async createRazorpayOrder(
+    dto: CreateRazorpayOrderDto,
+    companyId: string,
+    userId: string,
+  ) {
+    this.assertRazorpayConfigured();
 
-    const amountInr = billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
-    if (!amountInr || amountInr <= 0) {
+    const normalized = dto.planType.toUpperCase().trim();
+    const billingPeriod = dto.billingPeriod ?? BillingPeriod.MONTHLY;
+    const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
+    if (!plan) {
+      throw new BadRequestException(`Plan "${normalized}" not found or inactive`);
+    }
+
+    const listPrice =
+      billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
+    if (!listPrice || listPrice <= 0) {
       throw new BadRequestException('Plan is free or price is not set');
     }
 
-    // Check if the wallet covers the full amount! (or if the remaining is less than ₹1, which Razorpay rejects)
-    const preview = await this.subscriptionsService.previewPlanChange(companyId, plan._id.toString());
-    const finalAmountInr = preview?.data?.amountToPay ?? amountInr;
+    let finalAmountInr = listPrice;
+    try {
+      const preview = await this.subscriptionsService.previewPlanChange(
+        companyId,
+        plan._id.toString(),
+      );
+      if (typeof preview?.data?.amountToPay === 'number') {
+        finalAmountInr = preview.data.amountToPay;
+      }
+    } catch {
+      // No existing subscription / preview unavailable — charge list price
+      finalAmountInr = listPrice;
+    }
 
     if (finalAmountInr < 1) {
-      // Wallet fully covers it!
       const created = await this.paymentModel.create({
         companyId,
-        submittedBy: companyId, // Can't easily get userId here without changing params, but companyId is okay
-        status: PaymentVerificationStatus.VERIFIED, // auto verify
+        submittedBy: userId,
+        status: PaymentVerificationStatus.VERIFIED,
         planType: normalized,
+        planId: plan._id,
         billingPeriod,
         amount: 0,
-        transactionId: 'WALLET_FULL',
-        verifiedBy: companyId,
+        transactionId: `WALLET_${Date.now()}`,
+        paymentMethod: PaymentMethodType.RAZORPAY,
+        paymentGateway: 'WALLET',
+        verifiedBy: userId,
         verifiedAt: new Date(),
-        notes: 'Paid fully via Wallet Credits',
+        notes: 'Paid fully via wallet credits (no Razorpay charge)',
       });
-      await this.subscriptionsService.changePlan(companyId, plan._id.toString(), created._id.toString());
-      return this.responseService.success('Plan upgraded using Wallet Balance', {
+
+      try {
+        await this.subscriptionsService.changePlan(
+          companyId,
+          plan._id.toString(),
+          created._id.toString(),
+        );
+      } catch {
+        // Ensure company limits still apply even if changePlan requires existing sub
+      }
+      await this.activateCompanyPlan(
+        companyId,
+        normalized,
+        billingPeriod,
+        plan._id as Types.ObjectId,
+      );
+
+      return this.responseService.success('Plan upgraded using wallet balance', {
         orderId: 'WALLET_PAID',
         amount: 0,
         currency: 'INR',
+        keyId: process.env.RAZORPAY_KEY_ID,
       });
     }
-    
+
     const options = {
-      amount: Math.round(finalAmountInr * 100), // Razorpay amount is in paise (must be strictly integer)
+      amount: Math.round(finalAmountInr * 100),
       currency: 'INR',
-      receipt: `rcpt_${companyId.substring(companyId.length - 6)}_${Date.now()}`,
+      receipt: `rcpt_${companyId.slice(-6)}_${Date.now()}`.slice(0, 40),
+      notes: {
+        companyId,
+        planType: normalized,
+        billingPeriod,
+        userId,
+      },
     };
 
     try {
@@ -203,50 +390,106 @@ export class PaymentsService {
         orderId: order.id,
         amount: order.amount,
         currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID,
+        planType: normalized,
+        billingPeriod,
       });
-    } catch (error) {
-      console.error('Razorpay Error:', error);
-      throw error;
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to create Razorpay order';
+      throw new BadRequestException(message);
     }
   }
 
-  async verifyRazorpayPayment(dto: any, companyId: string, userId: string) {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planType, billingPeriod } = dto;
-    
-    const body = razorpay_order_id + '|' + razorpay_payment_id;
+  async verifyRazorpayPayment(
+    dto: VerifyRazorpayPaymentDto,
+    companyId: string,
+    userId: string,
+  ) {
+    this.assertRazorpayConfigured();
+
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      planType,
+      billingPeriod,
+    } = dto;
+
+    // Idempotent: same Razorpay payment id must not create duplicate activations
+    const existing = await this.paymentModel.findOne({
+      transactionId: razorpay_payment_id,
+      paymentGateway: 'RAZORPAY',
+    });
+    if (existing) {
+      if (existing.status === PaymentVerificationStatus.VERIFIED) {
+        return this.responseService.success(
+          'Payment already verified. Subscription is active.',
+          existing,
+        );
+      }
+    }
+
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
-      .update(body.toString())
+      .update(body)
       .digest('hex');
 
     if (expectedSignature !== razorpay_signature) {
-      throw new BadRequestException('Invalid signature');
+      // Do NOT activate subscription on failed signature
+      throw new BadRequestException(
+        'Invalid Razorpay signature. Payment was not verified and subscription was not activated.',
+      );
     }
 
-    // Determine amount to save in payment record
     const normalized = planType.toUpperCase().trim();
+    const period = billingPeriod ?? BillingPeriod.MONTHLY;
     const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
-    const amountInr = plan ? (billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr) : 0;
+    const amountInr = plan
+      ? period === BillingPeriod.YEARLY
+        ? plan.yearlyPriceInr
+        : plan.monthlyPriceInr
+      : 0;
 
-    // Payment is valid, let's create a payment record
     const created = await this.paymentModel.create({
       companyId,
       submittedBy: userId,
-      status: PaymentVerificationStatus.VERIFIED, // auto verify
+      status: PaymentVerificationStatus.VERIFIED,
       planType: normalized,
-      billingPeriod,
+      planId: plan?._id,
+      billingPeriod: period,
       amount: amountInr || 0,
       transactionId: razorpay_payment_id,
+      razorpayOrderId: razorpay_order_id,
+      paymentMethod: PaymentMethodType.RAZORPAY,
+      paymentGateway: 'RAZORPAY',
       verifiedBy: userId,
       verifiedAt: new Date(),
-      notes: 'Paid via Razorpay',
+      notes: 'Paid via Razorpay — auto-verified',
     });
 
     if (plan) {
-      // Use SubscriptionsService to calculate prorated credits and apply wallet balances automatically!
-      await this.subscriptionsService.changePlan(companyId, plan._id.toString(), created._id.toString());
+      try {
+        await this.subscriptionsService.changePlan(
+          companyId,
+          plan._id.toString(),
+          created._id.toString(),
+        );
+      } catch {
+        // Fall through to activateCompanyPlan for companies without prior subscription row
+      }
+      await this.activateCompanyPlan(
+        companyId,
+        normalized,
+        period,
+        plan._id as Types.ObjectId,
+      );
     }
 
-    return this.responseService.success('Payment successful and plan upgraded', created);
+    return this.responseService.success(
+      'Payment successful. Subscription activated.',
+      created,
+    );
   }
 }

@@ -2,20 +2,22 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { UserRole } from '../../common/enums';
+import { ExpenseCategory, NotificationType, UserRole } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
 import { AuthService } from '../../auth/services/auth.service';
 import { LoginDto } from '../../auth/dto/login.dto';
 import { ExpensesService } from '../../expenses/services/expenses.service';
 import { DriversService } from '../../drivers/services/drivers.service';
+import { NotificationsService } from '../../notifications/services/notifications.service';
 import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { User, UserDocument } from '../../users/schemas/user.schema';
-import { ExpenseCategory } from '../../common/enums';
 import type { AuthenticatedUser } from '../../types';
 import { DriverAddExpenseDto } from '../dto/driver-add-expense.dto';
 import { DriverRepairRequestDto } from '../dto/driver-repair-request.dto';
@@ -119,6 +121,8 @@ function buildTodaySummary(
 
 @Injectable()
 export class DriverAppService {
+  private readonly logger = new Logger(DriverAppService.name);
+
   constructor(
     @InjectModel(Driver.name)
     private readonly driverModel: Model<DriverDocument>,
@@ -130,6 +134,7 @@ export class DriverAppService {
     private readonly expensesService: ExpensesService,
     private readonly driversService: DriversService,
     private readonly responseService: ResponseService,
+    @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
   private async findDriverForUser(user: AuthenticatedUser): Promise<DriverDocument> {
@@ -531,7 +536,7 @@ export class DriverAppService {
   async repairRequest(user: AuthenticatedUser, dto: DriverRepairRequestDto) {
     const { driver, vehicle } = await this.resolveDriverContext(user);
 
-    return this.expensesService.create(
+    const result = await this.expensesService.create(
       {
         vehicleId: vehicle._id.toString(),
         category: ExpenseCategory.REPAIR,
@@ -550,6 +555,36 @@ export class DriverAppService {
       undefined,
       driver._id.toString(),
     );
+
+    try {
+      const companyId = user.companyId!;
+      const admins = await this.userModel
+        .find({ companyId, role: UserRole.COMPANY_ADMIN })
+        .select('_id')
+        .lean();
+      const recipientIds = [
+        ...admins.map((a) => a._id.toString()),
+        ...(vehicle.ownerId ? [vehicle.ownerId.toString()] : []),
+      ];
+      await this.notificationsService?.notify({
+        userIds: recipientIds,
+        companyId,
+        type: NotificationType.REPAIR_REQUEST,
+        title: 'Repair request',
+        message: `${driver.fullName} reported: ${dto.title} (${vehicle.registrationNumber}).`,
+        entityType: 'vehicle',
+        entityId: vehicle._id.toString(),
+        meta: {
+          title: dto.title,
+          driverId: driver._id.toString(),
+          registrationNumber: vehicle.registrationNumber,
+        },
+      });
+    } catch (err) {
+      this.logger.warn('Repair request notification failed', err);
+    }
+
+    return result;
   }
 
   async dailyReport(user: AuthenticatedUser, dto: DriverDailyReportDto) {

@@ -11,6 +11,11 @@ import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema'
 import { Expense, ExpenseDocument } from '../schemas/expense.schema';
 import { CreateExpenseDto } from '../dto/create-expense.dto';
 import { UpdateExpenseDto } from '../dto/update-expense.dto';
+import {
+  restoreUpdate,
+  softDeleteUpdate,
+  withNotDeleted,
+} from '../../common/utils/soft-delete.util';
 
 @Injectable()
 export class ExpensesService {
@@ -53,11 +58,13 @@ export class ExpensesService {
     ownerId: string,
   ): Promise<Array<string | Types.ObjectId>> {
     const ids = await this.vehicleModel
-      .find({
-        companyId,
-        ownerId: { $in: this.idVariants(ownerId) },
-        isActive: { $ne: false },
-      })
+      .find(
+        withNotDeleted({
+          companyId,
+          ownerId: { $in: this.idVariants(ownerId) },
+          isActive: { $ne: false },
+        }),
+      )
       .distinct('_id');
     return ids.flatMap((id) => this.idVariants(id));
   }
@@ -67,11 +74,13 @@ export class ExpensesService {
     companyId: string,
   ): Promise<Array<string | Types.ObjectId>> {
     const vehicles = await this.vehicleModel
-      .find({
-        companyId,
-        assignedDriverId: { $in: this.idVariants(driverId) },
-        isActive: { $ne: false },
-      })
+      .find(
+        withNotDeleted({
+          companyId,
+          assignedDriverId: { $in: this.idVariants(driverId) },
+          isActive: { $ne: false },
+        }),
+      )
       .select('_id')
       .lean();
     return vehicles.flatMap((v) => this.idVariants(v._id));
@@ -99,21 +108,57 @@ export class ExpensesService {
       throw new ForbiddenException('You can only add expenses for your own vehicles');
     }
 
-    const created = await this.expenseModel.create({
-      companyId,
-      vehicleId: dto.vehicleId,
-      recordedBy: recordedBy ?? undefined,
-      driverId: driverId ?? undefined,
-      category: dto.category,
-      amount: dto.amount,
-      description: dto.description,
-      expenseDate: dto.expenseDate ?? new Date(),
-      odometerKm: dto.odometerKm,
-      receiptUrl: dto.receiptUrl,
-      categoryDetails: dto.categoryDetails,
-    });
+    const clientRequestId = dto.clientRequestId?.trim() || undefined;
+    if (clientRequestId) {
+      const existing = await this.expenseModel.findOne(
+        withNotDeleted({ clientRequestId }),
+      );
+      if (existing) {
+        return this.responseService.success(
+          'Expense already synced (duplicate prevented)',
+          existing,
+        );
+      }
+    }
 
-    return this.responseService.created('Expense created successfully', created);
+    try {
+      const created = await this.expenseModel.create({
+        companyId,
+        vehicleId: dto.vehicleId,
+        recordedBy: recordedBy ?? undefined,
+        driverId: driverId ?? undefined,
+        category: dto.category,
+        amount: dto.amount,
+        description: dto.description,
+        expenseDate: dto.expenseDate ?? new Date(),
+        odometerKm: dto.odometerKm,
+        receiptUrl: dto.receiptUrl,
+        categoryDetails: dto.categoryDetails,
+        clientRequestId,
+      });
+
+      return this.responseService.created('Expense created successfully', created);
+    } catch (err: unknown) {
+      // Race: another sync already inserted the same clientRequestId
+      if (
+        clientRequestId &&
+        err &&
+        typeof err === 'object' &&
+        'code' in err &&
+        (err as { code: number }).code === 11000
+      ) {
+        const existing = await this.expenseModel.findOne(
+          withNotDeleted({ clientRequestId }),
+        );
+        if (existing) {
+          return this.responseService.success(
+            'Expense already synced (duplicate prevented)',
+            existing,
+          );
+        }
+      }
+      throw err;
+    }
   }
 
   async findAll(companyId?: string, ownerId?: string, allowAllCompanies = false) {
@@ -121,9 +166,9 @@ export class ExpensesService {
       throw new BadRequestException('companyId is required to list expenses');
     }
 
-    const filter: Record<string, unknown> = {
+    const filter: Record<string, unknown> = withNotDeleted({
       isActive: { $ne: false },
-    };
+    });
     if (companyId) {
       filter.companyId = { $in: this.idVariants(companyId) };
     }
@@ -164,11 +209,11 @@ export class ExpensesService {
       return this.findByDriver(driverId, companyId, filters);
     }
 
-    const filter: Record<string, unknown> = {
+    const filter: Record<string, unknown> = withNotDeleted({
       companyId: { $in: this.idVariants(companyId) },
       vehicleId: { $in: vehicleIds },
       isActive: { $ne: false },
-    };
+    });
 
     if (filters?.category) {
       filter.category = filters.category;
@@ -199,11 +244,11 @@ export class ExpensesService {
       toDate?: Date;
     },
   ) {
-    const filter: Record<string, unknown> = {
+    const filter: Record<string, unknown> = withNotDeleted({
       companyId: { $in: this.idVariants(companyId) },
       driverId: { $in: this.idVariants(driverId) },
       isActive: { $ne: false },
-    };
+    });
 
     if (filters?.category) {
       filter.category = filters.category;
@@ -224,7 +269,7 @@ export class ExpensesService {
   }
 
   async findOne(id: string) {
-    const item = await this.expenseModel.findById(id);
+    const item = await this.expenseModel.findOne(withNotDeleted({ _id: id }));
     if (!item) {
       throw new NotFoundException('Expense not found');
     }
@@ -237,12 +282,14 @@ export class ExpensesService {
     companyId: string,
     dto: { amount?: number; description?: string; expenseDate?: string },
   ) {
-    const expense = await this.expenseModel.findOne({
-      _id: expenseId,
-      companyId: { $in: this.idVariants(companyId) },
-      driverId: { $in: this.idVariants(driverId) },
-      isActive: { $ne: false },
-    });
+    const expense = await this.expenseModel.findOne(
+      withNotDeleted({
+        _id: expenseId,
+        companyId: { $in: this.idVariants(companyId) },
+        driverId: { $in: this.idVariants(driverId) },
+        isActive: { $ne: false },
+      }),
+    );
 
     if (!expense) {
       throw new ForbiddenException('You can only edit expenses that you recorded');
@@ -285,10 +332,26 @@ export class ExpensesService {
     if (ownerId) {
       await this.assertOwnerExpense(id, ownerId);
     }
-    const item = await this.expenseModel.findByIdAndDelete(id);
+    const item = await this.expenseModel.findOneAndUpdate(
+      withNotDeleted({ _id: id }),
+      softDeleteUpdate(),
+      { returnDocument: 'after' },
+    );
     if (!item) {
       throw new NotFoundException('Expense not found');
     }
-    return this.responseService.success('Expense deleted successfully');
+    return this.responseService.success('Expense deleted successfully', item);
+  }
+
+  async restore(id: string) {
+    const item = await this.expenseModel.findOneAndUpdate(
+      { _id: id, isDeleted: true },
+      restoreUpdate(),
+      { returnDocument: 'after' },
+    );
+    if (!item) {
+      throw new NotFoundException('Deleted expense not found');
+    }
+    return this.responseService.success('Expense restored successfully', item);
   }
 }

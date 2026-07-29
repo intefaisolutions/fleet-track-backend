@@ -84,4 +84,11 @@ export class UsersController {
   remove(@Param('id') id: string) {
     return this.usersService.remove(id);
   }
+
+  @Post(':id/restore')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.COMPANY_ADMIN)
+  @Permissions(Permission.USERS_WRITE)
+  restore(@Param('id') id: string) {
+    return this.usersService.restore(id);
+  }
 }
