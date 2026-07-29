@@ -67,7 +67,11 @@ export class SubscriptionsController {
     if (!user.companyId) {
       throw new Error('User does not belong to a company');
     }
-    return this.sService.previewPlanChange(user.companyId, dto.newPlanId);
+    return this.sService.previewPlanChange(
+      user.companyId,
+      dto.newPlanId,
+      dto.billingPeriod,
+    );
   }
 
   @Post('change-plan')
@@ -76,6 +80,11 @@ export class SubscriptionsController {
     if (!user.companyId) {
       throw new Error('User does not belong to a company');
     }
-    return this.sService.changePlan(user.companyId, dto.newPlanId, dto.paymentId);
+    return this.sService.changePlan(
+      user.companyId,
+      dto.newPlanId,
+      dto.paymentId,
+      dto.billingPeriod,
+    );
   }
 }

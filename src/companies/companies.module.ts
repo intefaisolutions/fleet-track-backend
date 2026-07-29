@@ -6,6 +6,9 @@ import { MailModule } from '../mail/mail.module';
 import { Subscription, SubscriptionSchema } from '../subscriptions/schemas/subscription.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Vehicle, VehicleSchema } from '../vehicles/schemas/vehicle.schema';
+import { Driver, DriverSchema } from '../drivers/schemas/driver.schema';
+import { Expense, ExpenseSchema } from '../expenses/schemas/expense.schema';
+import { Payment, PaymentSchema } from '../payments/schemas/payment.schema';
 import { Company, CompanySchema } from './schemas/company.schema';
 import {
   LicenseResendLog,
@@ -24,6 +27,9 @@ import { CompaniesService } from './services/companies.service';
       { name: User.name, schema: UserSchema },
       { name: Subscription.name, schema: SubscriptionSchema },
       { name: Vehicle.name, schema: VehicleSchema },
+      { name: Driver.name, schema: DriverSchema },
+      { name: Expense.name, schema: ExpenseSchema },
+      { name: Payment.name, schema: PaymentSchema },
       { name: LicenseResendLog.name, schema: LicenseResendLogSchema },
     ]),
   ],

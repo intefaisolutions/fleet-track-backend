@@ -201,6 +201,19 @@ export class CompaniesController {
   }
 
   @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard, SupportAdminPermissionsGuard)
+  @Get(':id/detail')
+  @Roles(ROLES.SUPER_ADMIN, ROLES.SUPPORT_ADMIN)
+  @SupportAdminPermissions('companies:read')
+  @ApiOperation({
+    summary:
+      'Super Admin company drill-down: profile, plan, vehicles, drivers, expenses, payments, users',
+  })
+  findDetail(@Param('id') id: string) {
+    return this.companiesService.findDetail(id);
+  }
+
+  @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get(':id')
   findOne(@Param('id') id: string) {

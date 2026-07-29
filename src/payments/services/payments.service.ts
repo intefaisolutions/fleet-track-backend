@@ -40,6 +40,7 @@ import {
   CreateRazorpayOrderDto,
   VerifyRazorpayPaymentDto,
 } from '../dto/razorpay.dto';
+import { addBillingPeriod } from '../../common/utils/billing-period.util';
 
 @Injectable()
 export class PaymentsService {
@@ -126,12 +127,8 @@ export class PaymentsService {
     planId?: Types.ObjectId,
   ) {
     const limits = await this.resolvePlanLimits(planType);
-    const periodEnd = new Date();
-    if (billingPeriod === BillingPeriod.YEARLY) {
-      periodEnd.setFullYear(periodEnd.getFullYear() + 1);
-    } else {
-      periodEnd.setMonth(periodEnd.getMonth() + 1);
-    }
+    const startDate = new Date();
+    const currentPeriodEnd = addBillingPeriod(startDate, billingPeriod);
 
     await this.companyModel.findByIdAndUpdate(companyId, {
       planType,
@@ -149,7 +146,8 @@ export class PaymentsService {
         status: SubscriptionStatus.ACTIVE,
         vehicleLimit: limits.vehicleLimit,
         billingPeriod,
-        currentPeriodEnd: periodEnd,
+        startDate,
+        currentPeriodEnd,
       },
       { upsert: true },
     );
@@ -322,6 +320,7 @@ export class PaymentsService {
       const preview = await this.subscriptionsService.previewPlanChange(
         companyId,
         plan._id.toString(),
+        billingPeriod,
       );
       if (typeof preview?.data?.amountToPay === 'number') {
         finalAmountInr = preview.data.amountToPay;
@@ -353,6 +352,7 @@ export class PaymentsService {
           companyId,
           plan._id.toString(),
           created._id.toString(),
+          billingPeriod,
         );
       } catch {
         // Ensure company limits still apply even if changePlan requires existing sub
@@ -475,6 +475,7 @@ export class PaymentsService {
           companyId,
           plan._id.toString(),
           created._id.toString(),
+          period,
         );
       } catch {
         // Fall through to activateCompanyPlan for companies without prior subscription row
