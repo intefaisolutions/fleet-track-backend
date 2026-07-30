@@ -57,6 +57,9 @@ export class User {
   @Prop()
   lastActivity?: Date;
 
+  @Prop({ trim: true })
+  address?: string;
+
   @Prop({ default: false, index: true })
   isDeleted: boolean;
 

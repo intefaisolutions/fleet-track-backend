@@ -217,6 +217,7 @@ export class DriverAppService {
       fullName?: string;
       email?: string;
       phone?: string;
+      address?: string;
       role?: string;
     },
     driver: DriverDocument,
@@ -232,6 +233,7 @@ export class DriverAppService {
       fullName: user.fullName ?? driver.fullName,
       email: user.email,
       phone: user.phone ?? driver.phone,
+      address: user.address ?? '',
       role: user.role ?? UserRole.DRIVER,
       initials: buildInitials(user.fullName ?? driver.fullName),
       designation: driver.licenseNumber
@@ -240,6 +242,7 @@ export class DriverAppService {
       vehicleNo: vehicle?.registrationNumber ?? '',
       vehicle: vehicle?.registrationNumber ?? '',
       vehicleModel: vehicleLabel || vehicle?.modelName || '',
+      fuelType: vehicle?.fuelType ?? '',
       owner: owner?.fullName ?? '—',
       ownerPhone: owner?.phone ?? '',
       driverId: driver._id.toString(),
@@ -345,6 +348,7 @@ export class DriverAppService {
         fullName: dbUser.fullName,
         email: dbUser.email,
         phone: dbUser.phone,
+        address: dbUser.address,
         role: dbUser.role,
       },
       driver,
@@ -385,6 +389,41 @@ export class DriverAppService {
       this.mapExpenseItem(e as unknown as Record<string, unknown>),
     );
 
+    let lastServiceRaw: Date | null = vehicle.lastServiceDate
+      ? new Date(vehicle.lastServiceDate)
+      : null;
+
+    // Backfill from latest paid SERVICE expense if vehicle field is empty
+    if (!lastServiceRaw) {
+      const latestService = (
+        expenses as unknown as Array<{
+          category?: string;
+          expenseDate?: Date | string;
+          categoryDetails?: { type?: string };
+          amount?: number;
+        }>
+      )
+        .filter(
+          (exp) =>
+            String(exp.category).toUpperCase() === ExpenseCategory.SERVICE &&
+            exp.categoryDetails?.type !== 'SERVICE_ALERT',
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.expenseDate as string).getTime() -
+            new Date(a.expenseDate as string).getTime(),
+        )[0];
+
+      if (latestService?.expenseDate) {
+        lastServiceRaw = new Date(latestService.expenseDate);
+        await this.vehicleModel.findByIdAndUpdate(vehicle._id, {
+          lastServiceDate: lastServiceRaw,
+        });
+      }
+    }
+
+    const lastServiceFormatted = formatDisplayDate(lastServiceRaw);
+
     return this.responseService.success('Dashboard fetched successfully', {
       profile,
       myVehicle: {
@@ -404,15 +443,16 @@ export class DriverAppService {
         make: vehicle.make,
         modelName: vehicle.modelName,
         ownerName: owner?.fullName ?? '—',
+        fuelType: vehicle.fuelType ?? '',
       },
       stats: {
         todayExpenses,
         monthExpenses,
         monthTotalLabel: `₹${Math.round(monthExpenses).toLocaleString('en-IN')} this month`,
-        lastServiceDate: formatDisplayDate(vehicle.lastServiceDate),
-        lastServiceLabel: vehicle.lastServiceDate
-          ? `Last Service: ${formatDisplayDate(vehicle.lastServiceDate)}`
-          : 'Last Service: —',
+        lastServiceDate: lastServiceFormatted,
+        lastServiceLabel: lastServiceFormatted
+          ? `Last Service: ${lastServiceFormatted}`
+          : 'No service yet',
         odometerKm: vehicle.currentOdometerKm ?? null,
         odometerLabel: formatOdometer(vehicle.currentOdometerKm),
       },
@@ -430,6 +470,7 @@ export class DriverAppService {
       registrationNumber: vehicle.registrationNumber,
       make: vehicle.make,
       modelName: vehicle.modelName,
+      fuelType: vehicle.fuelType ?? '',
       ownerName: owner?.fullName ?? '—',
       lastServiceDate: formatDisplayDate(vehicle.lastServiceDate),
       odometerKm: vehicle.currentOdometerKm ?? null,
@@ -641,6 +682,7 @@ export class DriverAppService {
           fullName: dbUser.fullName,
           email: dbUser.email,
           phone: dbUser.phone,
+          address: dbUser.address,
           role: dbUser.role,
         },
         driver,
@@ -651,12 +693,43 @@ export class DriverAppService {
   }
 
   async updateProfile(user: AuthenticatedUser, dto: DriverUpdateProfileDto) {
-    const { driver } = await this.resolveDriverContext(user);
-    const fullName = dto.fullName.trim();
+    const driver = await this.findDriverForUser(user);
+    const userUpdate: Record<string, string> = {};
+    const driverUpdate: Record<string, string> = {};
+
+    if (dto.fullName?.trim()) {
+      const fullName = dto.fullName.trim();
+      userUpdate.fullName = fullName;
+      driverUpdate.fullName = fullName;
+    }
+
+    if (dto.phone?.trim()) {
+      const phone = dto.phone.trim();
+      const existing = await this.userModel.findOne({
+        phone,
+        _id: { $ne: user.userId },
+        isDeleted: { $ne: true },
+      });
+      if (existing) {
+        throw new BadRequestException('Phone number already in use');
+      }
+      userUpdate.phone = phone;
+      driverUpdate.phone = phone;
+    }
+
+    if (dto.address !== undefined) {
+      userUpdate.address = dto.address.trim();
+    }
+
+    if (Object.keys(userUpdate).length === 0) {
+      throw new BadRequestException('No profile fields to update');
+    }
 
     await Promise.all([
-      this.userModel.findByIdAndUpdate(user.userId, { fullName }),
-      this.driverModel.findByIdAndUpdate(driver._id, { fullName }),
+      this.userModel.findByIdAndUpdate(user.userId, userUpdate),
+      Object.keys(driverUpdate).length > 0
+        ? this.driverModel.findByIdAndUpdate(driver._id, driverUpdate)
+        : Promise.resolve(),
     ]);
 
     return this.getProfile(user);

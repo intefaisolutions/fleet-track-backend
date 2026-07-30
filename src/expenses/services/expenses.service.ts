@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { ExpenseCategory } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { Expense, ExpenseDocument } from '../schemas/expense.schema';
@@ -26,6 +27,40 @@ export class ExpensesService {
     private readonly vehicleModel: Model<VehicleDocument>,
     private readonly responseService: ResponseService,
   ) {}
+
+  /**
+   * When a paid SERVICE expense is recorded (not a driver Service Alert),
+   * keep vehicle.lastServiceDate as the latest service date.
+   */
+  private isPaidServiceExpense(
+    category: string,
+    categoryDetails?: Record<string, unknown> | null,
+  ): boolean {
+    if (category !== ExpenseCategory.SERVICE) return false;
+    const type = categoryDetails?.type;
+    if (type === 'SERVICE_ALERT') return false;
+    return true;
+  }
+
+  private async syncVehicleLastServiceDate(
+    vehicleId: string | Types.ObjectId,
+    expenseDate?: Date | string | null,
+  ) {
+    const serviceDate = expenseDate ? new Date(expenseDate) : new Date();
+    if (Number.isNaN(serviceDate.getTime())) return;
+
+    const vehicle = await this.vehicleModel.findById(vehicleId).select('lastServiceDate');
+    if (!vehicle) return;
+
+    const current = vehicle.lastServiceDate
+      ? new Date(vehicle.lastServiceDate).getTime()
+      : 0;
+    if (serviceDate.getTime() < current) return;
+
+    await this.vehicleModel.findByIdAndUpdate(vehicleId, {
+      lastServiceDate: serviceDate,
+    });
+  }
 
   private async assertOwnerVehicle(vehicleId: string, ownerId: string) {
     const vehicle = await this.vehicleModel.findById(vehicleId);
@@ -122,6 +157,7 @@ export class ExpensesService {
     }
 
     try {
+      const expenseDate = dto.expenseDate ?? new Date();
       const created = await this.expenseModel.create({
         companyId,
         vehicleId: dto.vehicleId,
@@ -130,12 +166,21 @@ export class ExpensesService {
         category: dto.category,
         amount: dto.amount,
         description: dto.description,
-        expenseDate: dto.expenseDate ?? new Date(),
+        expenseDate,
         odometerKm: dto.odometerKm,
         receiptUrl: dto.receiptUrl,
         categoryDetails: dto.categoryDetails,
         clientRequestId,
       });
+
+      if (
+        this.isPaidServiceExpense(
+          dto.category,
+          dto.categoryDetails as Record<string, unknown> | undefined,
+        )
+      ) {
+        await this.syncVehicleLastServiceDate(dto.vehicleId, expenseDate);
+      }
 
       return this.responseService.created('Expense created successfully', created);
     } catch (err: unknown) {
@@ -325,6 +370,16 @@ export class ExpensesService {
     if (!item) {
       throw new NotFoundException('Expense not found');
     }
+
+    const details =
+      (item.categoryDetails as Record<string, unknown> | undefined) ?? undefined;
+    if (this.isPaidServiceExpense(item.category, details)) {
+      await this.syncVehicleLastServiceDate(
+        item.vehicleId,
+        item.expenseDate ?? new Date(),
+      );
+    }
+
     return this.responseService.success('Expense updated successfully', item);
   }
 
