@@ -15,7 +15,11 @@ import {
   softDeleteUpdate,
   withNotDeleted,
 } from '../../common/utils/soft-delete.util';
-import { SubscriptionStatus } from '../../common/enums';
+import { SubscriptionStatus, BillingPeriod } from '../../common/enums';
+import {
+  addBillingPeriod,
+  planPriceForPeriod,
+} from '../../common/utils/billing-period.util';
 
 @Injectable()
 export class SubscriptionsService {
@@ -53,7 +57,12 @@ export class SubscriptionsService {
     return { usedAmount, remainingCredit, elapsedDays, totalDays };
   }
 
-  async changePlan(companyId: string, newPlanId: string, paymentId?: string) {
+  async changePlan(
+    companyId: string,
+    newPlanId: string,
+    paymentId?: string,
+    billingPeriod: BillingPeriod = BillingPeriod.MONTHLY,
+  ) {
     const session = await this.connection.startSession();
     session.startTransaction();
 
@@ -86,8 +95,8 @@ export class SubscriptionsService {
         }], { session });
       }
 
-      // 3. Purchase new plan using wallet
-      let newPrice = newPlan.monthlyPriceInr; // Assuming monthly for this logic
+      // 3. Purchase new plan using wallet — price depends on billing period
+      let newPrice = planPriceForPeriod(newPlan, billingPeriod);
       let walletUsed = 0;
       let paymentRequired = newPrice;
 
@@ -107,14 +116,14 @@ export class SubscriptionsService {
           companyId: company._id,
           type: TransactionType.DEBIT,
           amount: walletUsed,
-          reason: `Purchased ${newPlan.planType} plan`,
+          reason: `Purchased ${newPlan.planType} plan (${billingPeriod})`,
           previousBalance: prevBalance,
           currentBalance: company.walletBalance,
           referenceSubscriptionId: currentSub._id,
         }], { session });
       }
 
-      // 4. Update Subscription
+      // 4. Update Subscription — period starts on purchase/change date
       const oldPlanId = currentSub.planId;
       const oldPrice = currentSub.originalPrice;
 
@@ -128,15 +137,17 @@ export class SubscriptionsService {
       }
 
       const now = new Date();
-      const nextMonth = new Date(now);
-      nextMonth.setMonth(nextMonth.getMonth() + 1); // Exact date logic
+      const periodEnd = addBillingPeriod(now, billingPeriod);
 
       currentSub.planId = newPlan._id;
+      currentSub.planType = newPlan.planType;
       currentSub.originalPrice = newPrice;
       currentSub.walletUsed = walletUsed;
       currentSub.amountPaid = paymentRequired;
+      currentSub.billingPeriod = billingPeriod;
       currentSub.startDate = now;
-      currentSub.currentPeriodEnd = nextMonth;
+      currentSub.currentPeriodEnd = periodEnd;
+      currentSub.status = SubscriptionStatus.ACTIVE;
       
       await currentSub.save({ session });
       await company.save({ session });
@@ -154,7 +165,7 @@ export class SubscriptionsService {
         walletUsed: walletUsed,
         paymentCollected: paymentRequired,
         startDate: now,
-        endDate: nextMonth,
+        endDate: periodEnd,
       }], { session });
 
       // 6. Tie payment record if provided
@@ -240,7 +251,11 @@ export class SubscriptionsService {
     return this.responseService.success('Subscription restored successfully', item);
   }
 
-  async previewPlanChange(companyId: string, newPlanId: string) {
+  async previewPlanChange(
+    companyId: string,
+    newPlanId: string,
+    billingPeriod: BillingPeriod = BillingPeriod.MONTHLY,
+  ) {
     const company = await this.companyModel.findById(companyId);
     if (!company) throw new NotFoundException('Company not found');
 
@@ -252,7 +267,7 @@ export class SubscriptionsService {
 
     const { usedAmount, remainingCredit, elapsedDays, totalDays } = await this.calculateProration(currentSub);
     const remainingDays = Math.max(0, totalDays - elapsedDays);
-    const newPrice = newPlan.monthlyPriceInr;
+    const newPrice = planPriceForPeriod(newPlan, billingPeriod);
 
     const walletBalanceBefore = company.walletBalance;
     const totalAvailable = this.roundToTwo(walletBalanceBefore + remainingCredit);
@@ -269,12 +284,17 @@ export class SubscriptionsService {
     }
 
     const walletBalanceAfter = this.roundToTwo(totalAvailable - walletUsed);
+    const periodStartsAt = new Date();
+    const periodEndsAt = addBillingPeriod(periodStartsAt, billingPeriod);
 
     return this.responseService.success('Plan change preview', {
-      currentPlan: currentSub.planId, // Note: would need to populate name normally
+      currentPlan: currentSub.planId,
       newPlan: newPlan.planType,
       currentPrice: currentSub.originalPrice,
       newPrice: newPrice,
+      billingPeriod,
+      periodStartsAt: periodStartsAt.toISOString(),
+      periodEndsAt: periodEndsAt.toISOString(),
       usedDays: Math.floor(elapsedDays),
       remainingDays: Math.ceil(remainingDays),
       creditGenerated: remainingCredit,

@@ -27,6 +27,9 @@ import { MailService } from '../../mail/mail.service';
 import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
+import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
+import { Expense, ExpenseDocument } from '../../expenses/schemas/expense.schema';
+import { Payment, PaymentDocument } from '../../payments/schemas/payment.schema';
 import { Company, CompanyDocument } from '../schemas/company.schema';
 import {
   LicenseResendLog,
@@ -90,6 +93,12 @@ export class CompaniesService {
     private readonly subscriptionModel: Model<SubscriptionDocument>,
     @InjectModel(Vehicle.name)
     private readonly vehicleModel: Model<VehicleDocument>,
+    @InjectModel(Driver.name)
+    private readonly driverModel: Model<DriverDocument>,
+    @InjectModel(Expense.name)
+    private readonly expenseModel: Model<ExpenseDocument>,
+    @InjectModel(Payment.name)
+    private readonly paymentModel: Model<PaymentDocument>,
     @InjectModel(LicenseResendLog.name)
     private readonly licenseResendLogModel: Model<LicenseResendLogDocument>,
     private readonly responseService: ResponseService,
@@ -336,9 +345,39 @@ export class CompaniesService {
       throw new NotFoundException('Company not found');
     }
 
-    const [licenseDetails, subscription] = await Promise.all([
+    const companyOid = item._id;
+    const [
+      licenseDetails,
+      subscription,
+      vehicleCount,
+      driverCount,
+      expenseStats,
+      ownerCount,
+      adminCount,
+    ] = await Promise.all([
       this.licensesService.getDetailsForCompany(id),
-      this.subscriptionModel.findOne({ companyId: item._id }).lean(),
+      this.subscriptionModel.findOne({ companyId: companyOid }).lean(),
+      this.vehicleModel.countDocuments(withNotDeleted({ companyId: companyOid })),
+      this.driverModel.countDocuments(withNotDeleted({ companyId: companyOid })),
+      this.expenseModel.aggregate<{ count: number; total: number }>([
+        { $match: withNotDeleted({ companyId: companyOid }) },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            total: { $sum: '$amount' },
+          },
+        },
+      ]),
+      this.userModel.countDocuments(
+        withNotDeleted({ companyId: companyOid, role: UserRole.VEHICLE_OWNER }),
+      ),
+      this.userModel.countDocuments(
+        withNotDeleted({
+          companyId: companyOid,
+          role: { $in: [UserRole.COMPANY_ADMIN] },
+        }),
+      ),
     ]);
 
     const licenseValidUntil =
@@ -346,16 +385,102 @@ export class CompaniesService {
       subscription?.currentPeriodEnd ??
       undefined;
 
+    const expenseRow = expenseStats[0];
     const enriched = {
       ...item,
       licenseKey: licenseDetails?.licenseKey,
       licenseValidUntil: licenseValidUntil
         ? new Date(licenseValidUntil).toISOString()
         : undefined,
-      planType: item.planType ?? licenseDetails?.planType,
+      planType: item.planType ?? licenseDetails?.planType ?? subscription?.planType,
+      subscription: subscription
+        ? {
+            planType: subscription.planType,
+            status: subscription.status,
+            billingPeriod: subscription.billingPeriod,
+            startDate: subscription.startDate
+              ? new Date(subscription.startDate).toISOString()
+              : undefined,
+            currentPeriodEnd: subscription.currentPeriodEnd
+              ? new Date(subscription.currentPeriodEnd).toISOString()
+              : undefined,
+            originalPrice: subscription.originalPrice,
+            amountPaid: subscription.amountPaid,
+            vehicleLimit: subscription.vehicleLimit ?? item.vehicleLimit,
+          }
+        : null,
+      stats: {
+        vehicleCount,
+        driverCount,
+        expenseCount: expenseRow?.count ?? 0,
+        expenseTotal: expenseRow?.total ?? 0,
+        ownerCount,
+        adminCount,
+      },
     };
 
     return this.responseService.success('Company fetched successfully', enriched);
+  }
+
+  /** Super Admin company drill-down: fleet, drivers, expenses, payments, users */
+  async findDetail(id: string) {
+    const base = await this.findOne(id);
+    const company = base.data as Record<string, unknown> & { _id: Types.ObjectId };
+    const companyOid = company._id;
+
+    const [vehicles, drivers, expenses, payments, users] = await Promise.all([
+      this.vehicleModel
+        .find(withNotDeleted({ companyId: companyOid }))
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .populate('assignedDriverId', 'fullName phone')
+        .populate('ownerId', 'fullName email')
+        .lean(),
+      this.driverModel
+        .find(withNotDeleted({ companyId: companyOid }))
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .populate('userId', 'email fullName phone')
+        .lean(),
+      this.expenseModel
+        .find(withNotDeleted({ companyId: companyOid }))
+        .sort({ expenseDate: -1, createdAt: -1 })
+        .limit(200)
+        .populate('vehicleId', 'registrationNumber make modelName')
+        .populate('recordedBy', 'fullName role')
+        .lean(),
+      this.paymentModel
+        .find({ companyId: companyOid })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean(),
+      this.userModel
+        .find(
+          withNotDeleted({
+            companyId: companyOid,
+            role: {
+              $in: [
+                UserRole.COMPANY_ADMIN,
+                UserRole.VEHICLE_OWNER,
+                UserRole.DRIVER,
+              ],
+            },
+          }),
+        )
+        .select('fullName email phone role status createdAt')
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .lean(),
+    ]);
+
+    return this.responseService.success('Company detail fetched successfully', {
+      ...company,
+      vehicles,
+      drivers,
+      expenses,
+      payments,
+      users,
+    });
   }
 
   async approve(id: string) {

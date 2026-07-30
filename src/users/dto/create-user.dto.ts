@@ -25,6 +25,11 @@ export class CreateUserDto {
   @IsValidPhoneNumber()
   phone: string;
 
+  @ApiPropertyOptional({ example: '123, Gandhi Nagar, Delhi' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
   @ApiProperty({ example: 'Password123', minLength: 8 })
   @IsString()
   @MinLength(8)
