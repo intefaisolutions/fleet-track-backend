@@ -52,7 +52,11 @@ export class CreateVehicleDto {
   @IsEnum(VehicleStatus)
   status?: VehicleStatus;
 
-  @ApiPropertyOptional({ example: 'Diesel' })
+  @ApiPropertyOptional({
+    example: 'Diesel + CNG',
+    description:
+      'Petrol | Diesel | CNG | CNG + Petrol | Diesel + CNG | Electric',
+  })
   @IsOptional()
   @IsString()
   fuelType?: string;
