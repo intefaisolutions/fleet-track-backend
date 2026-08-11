@@ -26,6 +26,7 @@ import { CreateCompanyDto } from '../dto/create-company.dto';
 import { UpdateCompanyDto } from '../dto/update-company.dto';
 import { RegisterCompanyDto } from '../dto/register-company.dto';
 import { AddCompanySubAdminDto } from '../dto/company-sub-admin.dto';
+import { UpdateCompanySubAdminDto } from '../dto/update-company-sub-admin.dto';
 import { SuspendCompanyDto } from '../dto/suspend-company.dto';
 import { ActivateLicenseDto } from '../dto/activate-license.dto';
 import { CurrentUser } from '../../decorators/current-user.decorator';
@@ -149,6 +150,22 @@ export class CompaniesController {
       throw new BadRequestException('Company context required');
     }
     return this.companiesService.addSubAdmin(user.companyId, dto);
+  }
+
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Patch('me/sub-admins/:email')
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({ summary: 'Update company sub-admin name and permissions' })
+  updateSubAdmin(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('email') email: string,
+    @Body() dto: UpdateCompanySubAdminDto,
+  ) {
+    if (!user.companyId) {
+      throw new BadRequestException('Company context required');
+    }
+    return this.companiesService.updateSubAdmin(user.companyId, email, dto);
   }
 
   @ApiBearerAuth()

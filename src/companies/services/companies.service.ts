@@ -810,6 +810,73 @@ export class CompaniesService {
     });
   }
 
+  async updateSubAdmin(
+    companyId: string,
+    email: string,
+    dto: { permissions: string[]; name?: string },
+  ) {
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    const normalized = normalizeEmail(email);
+    const existing = company.subAdmins ?? [];
+    const index = existing.findIndex(
+      (a) => normalizeEmail(a.email) === normalized,
+    );
+    if (index < 0) {
+      throw new NotFoundException('Sub-admin not found');
+    }
+
+    try {
+      assertCompanySubAdminPermissions(dto.permissions);
+    } catch (err: unknown) {
+      throw new BadRequestException(
+        err instanceof Error ? err.message : 'Invalid sub-admin permissions',
+      );
+    }
+
+    const permissions = dto.permissions.filter((p) =>
+      (COMPANY_SUB_ADMIN_ALLOWED_PERMISSIONS as readonly string[]).includes(p),
+    );
+    if (permissions.length === 0) {
+      throw new BadRequestException('Select at least one permission');
+    }
+
+    const nextName = dto.name?.trim() || existing[index].name;
+    existing[index].permissions = permissions;
+    existing[index].name = nextName;
+    company.subAdmins = existing;
+    company.markModified('subAdmins');
+    await company.save();
+
+    const subUser = await this.userModel.findOne(
+      withNotDeleted({ email: normalized, companyId }),
+    );
+    if (subUser) {
+      subUser.permissions = permissions;
+      if (dto.name?.trim()) {
+        subUser.fullName = nextName;
+      }
+      await subUser.save();
+    }
+
+    const admins = company.subAdmins ?? [];
+    const permissionKeys = new Set<string>();
+    admins.forEach((a) => a.permissions.forEach((p) => permissionKeys.add(p)));
+
+    return this.responseService.success('Sub-admin permissions updated', {
+      admins,
+      stats: {
+        total: admins.length,
+        active: admins.filter((a) => a.status === 'ACTIVE').length,
+        pending: admins.filter((a) => a.status === 'PENDING').length,
+        rolesDefined: permissionKeys.size,
+      },
+    });
+  }
+
   async removeSubAdmin(companyId: string, email: string) {
     const normalized = normalizeEmail(email);
 

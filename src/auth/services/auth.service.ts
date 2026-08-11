@@ -53,8 +53,25 @@ export class AuthService {
     );
   }
 
+  private resolvePermissions(user: {
+    role: string;
+    permissions?: string[] | null;
+  }): string[] {
+    const rolePerms =
+      ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? [];
+    // Support admins + company sub-admins store an explicit grant list.
+    if (
+      user.role === UserRole.SUPPORT_ADMIN ||
+      (user.role === UserRole.COMPANY_ADMIN &&
+        Array.isArray(user.permissions) &&
+        user.permissions.length > 0)
+    ) {
+      return user.permissions ?? [];
+    }
+    return rolePerms;
+  }
+
   private sanitizeUser(user: UserDocument) {
-    const isSupportAdmin = user.role === UserRole.SUPPORT_ADMIN;
     return {
       id: user._id,
       fullName: user.fullName,
@@ -67,9 +84,7 @@ export class AuthService {
       companyId: user.companyId,
       lastLogin: user.lastLogin,
       lastActivity: user.lastActivity,
-      permissions: isSupportAdmin
-        ? (user.permissions ?? [])
-        : (ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? []),
+      permissions: this.resolvePermissions(user),
     };
   }
 
@@ -395,10 +410,7 @@ export class AuthService {
 
       return this.responseService.success('Profile fetched successfully', {
         ...JSON.parse(JSON.stringify(result.data)),
-        permissions:
-          user.role === UserRole.SUPPORT_ADMIN
-            ? (user.permissions ?? [])
-            : (ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? []),
+        permissions: this.resolvePermissions(user),
         requiresLicenseActivation,
       });
     }

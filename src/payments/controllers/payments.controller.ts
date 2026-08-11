@@ -33,8 +33,10 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('submit')
-  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
-  @ApiOperation({ summary: 'Submit manual payment proof (UPI / Bank Transfer)' })
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({
+    summary: 'Submit manual payment proof (UPI / Bank Transfer) — Company Admin only',
+  })
   submit(@Body() dto: SubmitPaymentDto, @CurrentUser() user: AuthenticatedUser) {
     return this.paymentsService.submit(dto, user.companyId!, user.userId);
   }
@@ -70,8 +72,10 @@ export class PaymentsController {
   }
 
   @Post('razorpay/create-order')
-  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
-  @ApiOperation({ summary: 'Create Razorpay order for plan upgrade' })
+  @Roles(ROLES.COMPANY_ADMIN)
+  @ApiOperation({
+    summary: 'Create Razorpay order for plan upgrade — Company Admin only',
+  })
   createRazorpayOrder(
     @Body() dto: CreateRazorpayOrderDto,
     @CurrentUser() user: AuthenticatedUser,
@@ -84,9 +88,10 @@ export class PaymentsController {
   }
 
   @Post('razorpay/verify')
-  @Roles(ROLES.COMPANY_ADMIN, ROLES.VEHICLE_OWNER)
+  @Roles(ROLES.COMPANY_ADMIN)
   @ApiOperation({
-    summary: 'Verify Razorpay payment signature and auto-activate subscription',
+    summary:
+      'Verify Razorpay payment signature and auto-activate subscription — Company Admin only',
   })
   verifyRazorpayPayment(
     @Body() dto: VerifyRazorpayPaymentDto,
