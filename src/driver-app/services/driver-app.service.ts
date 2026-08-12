@@ -409,17 +409,17 @@ export class DriverAppService {
       owner,
     );
 
-    const expenses = moneyExpenses(
-      (await this.expensesService.findForAssignedDriver(
-        driver._id.toString(),
-        user.companyId!,
-      )) as unknown as Array<{
-        amount?: unknown;
-        category?: string;
-        expenseDate: Date;
-        categoryDetails?: { type?: string };
-      }>,
-    );
+    const allExpenses = (await this.expensesService.findForAssignedDriver(
+      driver._id.toString(),
+      user.companyId!,
+    )) as unknown as Array<{
+      amount?: unknown;
+      category?: string;
+      expenseDate: Date;
+      categoryDetails?: { type?: string };
+    }>;
+    // Spend totals ignore ₹0 service/repair alerts; list still includes every item.
+    const expenses = moneyExpenses(allExpenses);
 
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -445,7 +445,7 @@ export class DriverAppService {
 
     const vehicleLabel = [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim();
 
-    const recentExpenses = expenses.slice(0, 5).map((e) =>
+    const recentExpenses = allExpenses.slice(0, 5).map((e) =>
       this.mapExpenseItem(e as unknown as Record<string, unknown>),
     );
 
@@ -556,18 +556,14 @@ export class DriverAppService {
     const driver = await this.findDriverForUser(user);
     const filters = parseExpenseFilters(query);
 
-    const allItems = moneyExpenses(
-      (await this.expensesService.findForAssignedDriver(
-        driver._id.toString(),
-        user.companyId!,
-      )) as unknown as Array<{ categoryDetails?: { type?: string }; amount?: unknown }>,
+    const allItems = await this.expensesService.findForAssignedDriver(
+      driver._id.toString(),
+      user.companyId!,
     );
-    const filteredItems = moneyExpenses(
-      (await this.expensesService.findForAssignedDriver(
-        driver._id.toString(),
-        user.companyId!,
-        filters,
-      )) as unknown as Array<{ categoryDetails?: { type?: string }; amount?: unknown }>,
+    const filteredItems = await this.expensesService.findForAssignedDriver(
+      driver._id.toString(),
+      user.companyId!,
+      filters,
     );
 
     const mapped = filteredItems.map((e) =>
@@ -578,10 +574,30 @@ export class DriverAppService {
       items: mapped,
       summary: {
         totalCount: allItems.length,
-        totalAmount: sumExpenseAmount(allItems as unknown as Array<{ amount?: unknown }>),
+        totalAmount: sumExpenseAmount(
+          moneyExpenses(
+            allItems as unknown as Array<{ categoryDetails?: { type?: string }; amount?: unknown }>,
+          ),
+        ),
         filteredCount: filteredItems.length,
-        filteredAmount: sumExpenseAmount(filteredItems as unknown as Array<{ amount?: unknown }>),
-        totalLabel: `Total: ₹${Math.round(sumExpenseAmount(allItems as unknown as Array<{ amount?: unknown }>)).toLocaleString('en-IN')}`,
+        filteredAmount: sumExpenseAmount(
+          moneyExpenses(
+            filteredItems as unknown as Array<{
+              categoryDetails?: { type?: string };
+              amount?: unknown;
+            }>,
+          ),
+        ),
+        totalLabel: `Total: ₹${Math.round(
+          sumExpenseAmount(
+            moneyExpenses(
+              allItems as unknown as Array<{
+                categoryDetails?: { type?: string };
+                amount?: unknown;
+              }>,
+            ),
+          ),
+        ).toLocaleString('en-IN')}`,
       },
     });
   }
@@ -696,18 +712,28 @@ export class DriverAppService {
   async dailyReport(user: AuthenticatedUser, dto: DriverDailyReportDto) {
     const { driver, vehicle } = await this.resolveDriverContext(user);
     const reportDate = dto.reportDate ? new Date(dto.reportDate) : new Date();
+    const startLocation = (dto.startLocation ?? '').trim();
+    const endLocation = (dto.endLocation ?? '').trim();
+    const purpose = (dto.purpose ?? '').trim();
+    const routeLabel =
+      startLocation && endLocation
+        ? `${startLocation} → ${endLocation}`
+        : (dto.destination ?? '').trim() || 'Trip';
 
-    return this.expensesService.create(
+    const result = await this.expensesService.create(
       {
         vehicleId: vehicle._id.toString(),
         category: ExpenseCategory.OTHER,
-        amount: dto.totalExpense,
-        description: dto.notes?.trim() || `Daily report: ${dto.destination}`,
+        amount: dto.totalExpense ?? 0,
+        description: dto.notes?.trim() || `Daily report: ${routeLabel}`,
         expenseDate: reportDate,
         categoryDetails: {
           type: 'DAILY_REPORT',
           totalKm: dto.totalKm,
-          destination: dto.destination,
+          startLocation,
+          endLocation,
+          purpose,
+          destination: routeLabel,
           notes: dto.notes,
           reportDate: dto.reportDate ?? reportDate.toISOString().slice(0, 10),
         },
@@ -717,6 +743,24 @@ export class DriverAppService {
       undefined,
       driver._id.toString(),
     );
+
+    await this.notifyVehicleStaff({
+      companyId: user.companyId!,
+      vehicle,
+      type: NotificationType.DAILY_REPORT,
+      title: 'Daily report',
+      message: `${driver.fullName} submitted daily report: ${routeLabel} (${dto.totalKm} km) — ${vehicle.registrationNumber}.`,
+      meta: {
+        totalKm: dto.totalKm,
+        startLocation,
+        endLocation,
+        purpose,
+        driverId: driver._id.toString(),
+        registrationNumber: vehicle.registrationNumber,
+      },
+    });
+
+    return result;
   }
 
   async getProfile(user: AuthenticatedUser) {
