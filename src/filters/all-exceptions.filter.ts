@@ -4,11 +4,15 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
+import { mongoUserMessage } from '../common/utils/mongo-error.util';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
@@ -21,11 +25,28 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const exceptionResponse =
       exception instanceof HttpException ? exception.getResponse() : null;
 
-    const message =
+    let message: string | string[] =
       typeof exceptionResponse === 'string'
         ? exceptionResponse
         : (exceptionResponse as { message?: string | string[] })?.message ||
           'Internal server error';
+
+    if (
+      status === HttpStatus.INTERNAL_SERVER_ERROR &&
+      (message === 'Internal server error' || !message)
+    ) {
+      const mongoMsg = mongoUserMessage(exception);
+      if (mongoMsg) {
+        message = mongoMsg;
+      }
+    }
+
+    if (status >= 500) {
+      this.logger.error(
+        exception instanceof Error ? exception.message : String(exception),
+        exception instanceof Error ? exception.stack : undefined,
+      );
+    }
 
     const extraData =
       exceptionResponse &&
@@ -34,9 +55,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? (exceptionResponse as { data?: unknown }).data
         : undefined;
 
+    const resolvedMessage = Array.isArray(message)
+      ? message.join(', ')
+      : message;
+
     response.status(status).json({
       success: false,
-      message: Array.isArray(message) ? message.join(', ') : message,
+      message: resolvedMessage,
       error:
         exception instanceof Error ? exception.name : 'InternalServerError',
       ...(extraData !== undefined ? { data: extraData } : {}),

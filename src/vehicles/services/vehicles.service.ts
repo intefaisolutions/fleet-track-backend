@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -10,6 +11,11 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { NotificationType, UserRole } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
+import {
+  isMongoDuplicateKey,
+  isTransientMongoError,
+  mongoUserMessage,
+} from '../../common/utils/mongo-error.util';
 import { Company, CompanyDocument } from '../../companies/schemas/company.schema';
 import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
 import { NotificationsService } from '../../notifications/services/notifications.service';
@@ -29,6 +35,16 @@ import {
   tombstoneUniqueValue,
   withNotDeleted,
 } from '../../common/utils/soft-delete.util';
+
+function normalizeRegistrationNumber(value: string): string {
+  return value.trim().toUpperCase().replace(/\s+/g, ' ');
+}
+
+function registrationLookupVariants(value: string): string[] {
+  const normalized = normalizeRegistrationNumber(value);
+  const compact = normalized.replace(/\s+/g, '');
+  return Array.from(new Set([normalized, compact, value.trim().toUpperCase()]));
+}
 
 @Injectable()
 export class VehiclesService {
@@ -72,20 +88,40 @@ export class VehiclesService {
     }
 
     return {
-      registrationNumber: registrationNumber.trim(),
+      registrationNumber: normalizeRegistrationNumber(registrationNumber),
       make: dto.make?.trim() || 'Fleet',
       modelName: modelName.trim(),
       vehicleType: dto.type,
-      vin: dto.vin,
+      vin: dto.vin?.trim() || undefined,
       status: dto.status,
-      fuelType: dto.fuelType?.trim(),
+      fuelType: dto.fuelType?.trim() || undefined,
       currentOdometerKm: dto.currentOdometerKm,
       year: dto.year,
       purchaseDate: dto.purchaseDate ? new Date(dto.purchaseDate) : undefined,
       purchaseCost: dto.purchaseCost,
-      imageUrl: dto.imageUrl,
-      assignedDriverId: dto.assignedDriverId,
+      imageUrl: dto.imageUrl?.trim() || undefined,
+      assignedDriverId: dto.assignedDriverId || undefined,
     };
+  }
+
+  private async assertRegistrationAvailable(
+    companyId: string,
+    registrationNumber: string,
+    excludeId?: string,
+  ) {
+    const variants = registrationLookupVariants(registrationNumber);
+    const existing = await this.vehicleModel.findOne(
+      withNotDeleted({
+        companyId,
+        registrationNumber: { $in: variants },
+        ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+      }),
+    );
+    if (existing) {
+      throw new ConflictException(
+        'A vehicle with this registration number already exists.',
+      );
+    }
   }
 
   async create(dto: CreateVehicleDto, companyId: string, ownerId?: string) {
@@ -114,7 +150,8 @@ export class VehiclesService {
     } else {
       const vehicleCount = await this.vehicleModel.countDocuments(
         withNotDeleted({ companyId }),
-      );      if (vehicleCount >= company.vehicleLimit) {
+      );
+      if (vehicleCount >= company.vehicleLimit) {
         await this.notifyVehicleLimit(
           companyId,
           vehicleCount,
@@ -138,12 +175,51 @@ export class VehiclesService {
     }
 
     const payload = this.mapCreateDto(dto);
-    const created = await this.vehicleModel.create({
+    await this.assertRegistrationAvailable(companyId, payload.registrationNumber);
+
+    const doc = {
       ...payload,
       companyId,
       ...(ownerId ? { ownerId } : dto.ownerId ? { ownerId: dto.ownerId } : {}),
-    });
-    return this.responseService.created('Vehicle created successfully', created);
+    };
+
+    try {
+      const created = await this.vehicleModel.create(doc);
+      return this.responseService.created('Vehicle created successfully', created);
+    } catch (err: unknown) {
+      if (isMongoDuplicateKey(err)) {
+        throw new ConflictException(
+          mongoUserMessage(err) ??
+            'A vehicle with this registration number already exists.',
+        );
+      }
+      if (isTransientMongoError(err)) {
+        this.logger.warn(
+          `Transient Mongo error on vehicle create, retrying once: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        try {
+          const created = await this.vehicleModel.create(doc);
+          return this.responseService.created(
+            'Vehicle created successfully',
+            created,
+          );
+        } catch (retryErr: unknown) {
+          if (isMongoDuplicateKey(retryErr)) {
+            throw new ConflictException(
+              'A vehicle with this registration number already exists.',
+            );
+          }
+          const msg = mongoUserMessage(retryErr);
+          if (msg) throw new BadRequestException(msg);
+          throw retryErr;
+        }
+      }
+      const msg = mongoUserMessage(err);
+      if (msg) throw new BadRequestException(msg);
+      throw err;
+    }
   }
 
   private async notifyVehicleLimit(
@@ -203,6 +279,21 @@ export class VehiclesService {
       await this.assertOwnerVehicle(id, ownerId);
     }
     const previous = await this.vehicleModel.findById(id);
+    if (!previous) {
+      throw new NotFoundException('Vehicle not found');
+    }
+
+    const nextRegistration = dto.registrationNumber ?? dto.vehicleNumber;
+    if (nextRegistration?.trim()) {
+      const normalized = normalizeRegistrationNumber(nextRegistration);
+      await this.assertRegistrationAvailable(
+        previous.companyId.toString(),
+        normalized,
+        id,
+      );
+      dto.registrationNumber = normalized;
+    }
+
     const item = await this.vehicleModel.findByIdAndUpdate(id, dto, {
       returnDocument: 'after',
     });

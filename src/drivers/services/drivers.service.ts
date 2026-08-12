@@ -245,16 +245,40 @@ export class DriversService {
     const filter = companyId ? { companyId } : {};
     const items = await this.driverModel
       .find(withNotDeleted(filter))
-      .sort({ createdAt: -1 });
-    return this.responseService.success('Drivers fetched successfully', items);
+      .populate('userId', 'email fullName phone')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const withEmail = items.map((item) => {
+      const user =
+        item.userId && typeof item.userId === 'object'
+          ? (item.userId as { email?: string })
+          : null;
+      return {
+        ...item,
+        email: user?.email ?? undefined,
+      };
+    });
+
+    return this.responseService.success('Drivers fetched successfully', withEmail);
   }
 
   async findOne(id: string) {
-    const item = await this.driverModel.findOne(withNotDeleted({ _id: id }));
+    const item = await this.driverModel
+      .findOne(withNotDeleted({ _id: id }))
+      .populate('userId', 'email fullName phone')
+      .lean();
     if (!item) {
       throw new NotFoundException('Driver not found');
     }
-    return this.responseService.success('Driver fetched successfully', item);
+    const user =
+      item.userId && typeof item.userId === 'object'
+        ? (item.userId as { email?: string })
+        : null;
+    return this.responseService.success('Driver fetched successfully', {
+      ...item,
+      email: user?.email ?? undefined,
+    });
   }
 
   async update(id: string, dto: UpdateDriverDto) {

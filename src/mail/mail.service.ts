@@ -34,6 +34,9 @@ export class MailService {
           user: this.configService.get<string>('mail.user'),
           pass: this.configService.get<string>('mail.pass'),
         },
+        connectionTimeout: 15_000,
+        greetingTimeout: 15_000,
+        socketTimeout: 20_000,
       });
     }
     return this.transporter;
@@ -229,7 +232,7 @@ export class MailService {
         `Failed to send company welcome email to ${to} (company="${companyName}")`,
         err instanceof Error ? err.stack : err,
       );
-      throw err;
+      return false;
     }
   }
 

@@ -231,32 +231,41 @@ export class CompaniesService {
         licenseId: license._id,
       });
 
-      // Extend only: welcome email after all DB writes succeed.
-      // Registration remains successful even if SMTP fails.
-      try {
-        const emailed = await this.mailService.sendCompanyWelcomeEmail({
+      // Do not await SMTP — slow/hanging mail was causing client timeouts while
+      // the company was already created (false "Registration failed" toast).
+      void this.mailService
+        .sendCompanyWelcomeEmail({
           to: email,
           companyName: company.name,
           adminName,
           licenseKey: license.licenseKey,
           planType: license.planType,
           validUntil: new Date(license.validUntil).toISOString().slice(0, 10),
-        });
-        if (!emailed) {
-          this.logger.warn(
-            `Company registered (id=${company._id}) but welcome email was not sent (mail disabled or SMTP not configured)`,
+        })
+        .then((emailed) => {
+          if (!emailed) {
+            this.logger.warn(
+              `Company registered (id=${company._id}) but welcome email was not sent (mail disabled or SMTP not configured)`,
+            );
+          }
+        })
+        .catch((mailErr: unknown) => {
+          this.logger.error(
+            `Company registered successfully (id=${company._id}) but welcome email failed for ${email}`,
+            mailErr instanceof Error ? mailErr.stack : String(mailErr),
           );
-        }
-      } catch (mailErr: unknown) {
-        this.logger.error(
-          `Company registered successfully (id=${company._id}) but welcome email failed for ${email}`,
-          mailErr instanceof Error ? mailErr.stack : String(mailErr),
-        );
-      }
+        });
 
       return this.responseService.created(
         'Company registered successfully. Check your email for the license key, then log in to activate.',
-        company,
+        {
+          id: company._id,
+          name: company.name,
+          email: company.email,
+          phone: company.phone,
+          planType: company.planType,
+          licenseActivated: company.licenseActivated,
+        },
       );
     } catch (err: unknown) {
       this.handleMongoDuplicate(err);
