@@ -218,6 +218,7 @@ export class DriverAppService {
       email?: string;
       phone?: string;
       address?: string;
+      profileImage?: string;
       role?: string;
     },
     driver: DriverDocument,
@@ -234,6 +235,7 @@ export class DriverAppService {
       email: user.email,
       phone: user.phone ?? driver.phone,
       address: user.address ?? '',
+      profileImage: user.profileImage ?? '',
       role: user.role ?? UserRole.DRIVER,
       initials: buildInitials(user.fullName ?? driver.fullName),
       designation: driver.licenseNumber
@@ -349,6 +351,7 @@ export class DriverAppService {
         email: dbUser.email,
         phone: dbUser.phone,
         address: dbUser.address,
+        profileImage: dbUser.profileImage,
         role: dbUser.role,
       },
       driver,
@@ -683,6 +686,7 @@ export class DriverAppService {
           email: dbUser.email,
           phone: dbUser.phone,
           address: dbUser.address,
+          profileImage: dbUser.profileImage,
           role: dbUser.role,
         },
         driver,
@@ -719,6 +723,10 @@ export class DriverAppService {
 
     if (dto.address !== undefined) {
       userUpdate.address = dto.address.trim();
+    }
+
+    if (dto.profileImage?.trim()) {
+      userUpdate.profileImage = dto.profileImage.trim();
     }
 
     if (Object.keys(userUpdate).length === 0) {

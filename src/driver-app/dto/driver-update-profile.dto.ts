@@ -18,4 +18,11 @@ export class DriverUpdateProfileDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiPropertyOptional({
+    example: 'https://cdn.example.com/profiles/driver.jpg',
+  })
+  @IsOptional()
+  @IsString()
+  profileImage?: string;
 }
