@@ -80,6 +80,17 @@ function parseExpenseFilters(query?: DriverMyExpensesQueryDto) {
   };
 }
 
+function isAlertExpense(exp: { categoryDetails?: { type?: string } }): boolean {
+  const type = exp.categoryDetails?.type;
+  return type === 'SERVICE_ALERT' || type === 'REPAIR_REQUEST';
+}
+
+function moneyExpenses<T extends { categoryDetails?: { type?: string } }>(
+  expenses: T[],
+): T[] {
+  return expenses.filter((exp) => !isAlertExpense(exp));
+}
+
 function sumExpenseAmount(expenses: Array<{ amount?: unknown }>) {
   return expenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
 }
@@ -209,6 +220,45 @@ export class DriverAppService {
     const driver = await this.findDriverForUser(user);
     const { vehicle, owner } = await this.findAssignedVehicle(driver, user.companyId!);
     return { driver, vehicle, owner };
+  }
+
+  private async notifyVehicleStaff(params: {
+    companyId: string;
+    vehicle: VehicleDocument;
+    type: NotificationType;
+    title: string;
+    message: string;
+    meta?: Record<string, unknown>;
+  }) {
+    try {
+      const admins = await this.userModel
+        .find({ companyId: params.companyId, role: UserRole.COMPANY_ADMIN })
+        .select('_id')
+        .lean();
+      const ownerRef = params.vehicle.ownerId as unknown;
+      const ownerUserId =
+        ownerRef && typeof ownerRef === 'object' && ownerRef !== null && '_id' in ownerRef
+          ? String((ownerRef as { _id: unknown })._id)
+          : ownerRef
+            ? String(ownerRef)
+            : undefined;
+      const recipientIds = [
+        ...admins.map((a) => a._id.toString()),
+        ...(ownerUserId ? [ownerUserId] : []),
+      ];
+      await this.notificationsService?.notify({
+        userIds: recipientIds,
+        companyId: params.companyId,
+        type: params.type,
+        title: params.title,
+        message: params.message,
+        entityType: 'vehicle',
+        entityId: params.vehicle._id.toString(),
+        meta: params.meta,
+      });
+    } catch (err) {
+      this.logger.warn(`${params.type} notification failed`, err);
+    }
   }
 
   private mapDriverUser(
@@ -359,9 +409,16 @@ export class DriverAppService {
       owner,
     );
 
-    const expenses = await this.expensesService.findForAssignedDriver(
-      driver._id.toString(),
-      user.companyId!,
+    const expenses = moneyExpenses(
+      (await this.expensesService.findForAssignedDriver(
+        driver._id.toString(),
+        user.companyId!,
+      )) as unknown as Array<{
+        amount?: unknown;
+        category?: string;
+        expenseDate: Date;
+        categoryDetails?: { type?: string };
+      }>,
     );
 
     const now = new Date();
@@ -499,14 +556,18 @@ export class DriverAppService {
     const driver = await this.findDriverForUser(user);
     const filters = parseExpenseFilters(query);
 
-    const allItems = await this.expensesService.findForAssignedDriver(
-      driver._id.toString(),
-      user.companyId!,
+    const allItems = moneyExpenses(
+      (await this.expensesService.findForAssignedDriver(
+        driver._id.toString(),
+        user.companyId!,
+      )) as unknown as Array<{ categoryDetails?: { type?: string }; amount?: unknown }>,
     );
-    const filteredItems = await this.expensesService.findForAssignedDriver(
-      driver._id.toString(),
-      user.companyId!,
-      filters,
+    const filteredItems = moneyExpenses(
+      (await this.expensesService.findForAssignedDriver(
+        driver._id.toString(),
+        user.companyId!,
+        filters,
+      )) as unknown as Array<{ categoryDetails?: { type?: string }; amount?: unknown }>,
     );
 
     const mapped = filteredItems.map((e) =>
@@ -557,7 +618,7 @@ export class DriverAppService {
   async serviceAlert(user: AuthenticatedUser, dto: DriverServiceAlertDto) {
     const { driver, vehicle } = await this.resolveDriverContext(user);
 
-    return this.expensesService.create(
+    const result = await this.expensesService.create(
       {
         vehicleId: vehicle._id.toString(),
         category: ExpenseCategory.SERVICE,
@@ -575,6 +636,22 @@ export class DriverAppService {
       undefined,
       driver._id.toString(),
     );
+
+    await this.notifyVehicleStaff({
+      companyId: user.companyId!,
+      vehicle,
+      type: NotificationType.SERVICE_ALERT,
+      title: 'Service alert',
+      message: `${driver.fullName} requested service: ${dto.message.trim()} (${vehicle.registrationNumber}).`,
+      meta: {
+        message: dto.message.trim(),
+        notes: dto.notes?.trim(),
+        driverId: driver._id.toString(),
+        registrationNumber: vehicle.registrationNumber,
+      },
+    });
+
+    return result;
   }
 
   async repairRequest(user: AuthenticatedUser, dto: DriverRepairRequestDto) {
@@ -600,33 +677,18 @@ export class DriverAppService {
       driver._id.toString(),
     );
 
-    try {
-      const companyId = user.companyId!;
-      const admins = await this.userModel
-        .find({ companyId, role: UserRole.COMPANY_ADMIN })
-        .select('_id')
-        .lean();
-      const recipientIds = [
-        ...admins.map((a) => a._id.toString()),
-        ...(vehicle.ownerId ? [vehicle.ownerId.toString()] : []),
-      ];
-      await this.notificationsService?.notify({
-        userIds: recipientIds,
-        companyId,
-        type: NotificationType.REPAIR_REQUEST,
-        title: 'Repair request',
-        message: `${driver.fullName} reported: ${dto.title} (${vehicle.registrationNumber}).`,
-        entityType: 'vehicle',
-        entityId: vehicle._id.toString(),
-        meta: {
-          title: dto.title,
-          driverId: driver._id.toString(),
-          registrationNumber: vehicle.registrationNumber,
-        },
-      });
-    } catch (err) {
-      this.logger.warn('Repair request notification failed', err);
-    }
+    await this.notifyVehicleStaff({
+      companyId: user.companyId!,
+      vehicle,
+      type: NotificationType.REPAIR_REQUEST,
+      title: 'Repair request',
+      message: `${driver.fullName} reported: ${dto.title} (${vehicle.registrationNumber}).`,
+      meta: {
+        title: dto.title,
+        driverId: driver._id.toString(),
+        registrationNumber: vehicle.registrationNumber,
+      },
+    });
 
     return result;
   }
