@@ -44,7 +44,9 @@ export class VehiclesController {
       throw new BadRequestException('companyId is required');
     }
     const ownerId =
-      user.role === ROLES.VEHICLE_OWNER ? user.userId : dto.ownerId;
+      user.role === ROLES.VEHICLE_OWNER
+        ? user.userId
+        : dto.ownerId ?? undefined;
     return this.vehiclesService.create(dto, companyId, ownerId);
   }
 
