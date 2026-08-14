@@ -302,7 +302,7 @@ export class ReportsService {
       topOwners,
       totalExpenses,
       totalExpenseAmount: expensesThisMonth,
-      myVehiclesLimit: subscription?.vehicleLimit ?? company?.vehicleLimit ?? 0,
+      myVehiclesLimit: company?.vehicleLimit ?? subscription?.vehicleLimit ?? 0,
       companyVehicleCount: ownerId ? companyVehicleCount : totalVehicles,
       mostExpensiveVehicle,
       upcomingServices,

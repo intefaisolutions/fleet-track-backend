@@ -33,6 +33,7 @@ import {
 } from '../../subscriptions/schemas/subscription.schema';
 import { SubscriptionsService } from '../../subscriptions/services/subscriptions.service';
 import { NotificationsService } from '../../notifications/services/notifications.service';
+import { StorageService } from '../../storage/services/storage.service';
 import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Payment, PaymentDocument } from '../schemas/payment.schema';
 import { SubmitPaymentDto } from '../dto/submit-payment.dto';
@@ -59,6 +60,7 @@ export class PaymentsService {
     private readonly userModel: Model<UserDocument>,
     private readonly responseService: ResponseService,
     private readonly subscriptionsService: SubscriptionsService,
+    private readonly storageService: StorageService,
     @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
 
@@ -300,9 +302,20 @@ export class PaymentsService {
       .populate('companyId', 'name email planType phone')
       .populate('submittedBy', 'fullName email phone')
       .populate('verifiedBy', 'fullName email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    return this.responseService.success('Payments fetched successfully', items);
+    const withViewableProof = await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        proofUrl: (await this.storageService.toViewUrl(item.proofUrl)) ?? item.proofUrl,
+      })),
+    );
+
+    return this.responseService.success(
+      'Payments fetched successfully',
+      withViewableProof,
+    );
   }
 
   async verify(id: string, verifiedBy: string) {

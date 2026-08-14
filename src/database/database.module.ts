@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import appConfig from '../config/app.config';
+import awsConfig from '../config/aws.config';
 import databaseConfig from '../config/database.config';
 import jwtConfig from '../config/jwt.config';
 import mailConfig from '../config/mail.config';
@@ -12,7 +13,14 @@ import supabaseConfig from '../config/supabase.config';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
-      load: [appConfig, databaseConfig, jwtConfig, mailConfig, supabaseConfig],
+      load: [
+        appConfig,
+        databaseConfig,
+        jwtConfig,
+        mailConfig,
+        supabaseConfig,
+        awsConfig,
+      ],
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],

@@ -7,6 +7,7 @@ import {
   SubscriptionPlanSchema,
 } from '../platform/schemas/subscription-plan.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { StorageModule } from '../storage/storage.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Payment, PaymentSchema } from './schemas/payment.schema';
 import { PaymentsController } from './controllers/payments.controller';
@@ -25,6 +26,7 @@ import { SubscriptionsModule } from '../subscriptions/subscriptions.module';
     ]),
     SubscriptionsModule,
     NotificationsModule,
+    StorageModule,
   ],
   controllers: [PaymentsController],
   providers: [PaymentsService],

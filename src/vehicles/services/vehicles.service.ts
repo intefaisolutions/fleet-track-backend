@@ -124,7 +124,7 @@ export class VehiclesService {
       .findOne(withNotDeleted({ companyId }))
       .lean();
     const vehicleLimit =
-      subscription?.vehicleLimit ?? company.vehicleLimit ?? 5;
+      company.vehicleLimit ?? subscription?.vehicleLimit ?? 5;
     const used = await this.vehicleModel.countDocuments(
       withNotDeleted(this.companyIdFilter(companyId)),
     );
@@ -184,7 +184,7 @@ export class VehiclesService {
       .findOne(withNotDeleted({ companyId }))
       .lean();
     const planLimit =
-      subscription?.vehicleLimit ?? company.vehicleLimit ?? 5;
+      company.vehicleLimit ?? subscription?.vehicleLimit ?? 5;
 
     // Company-wide pool: plan vehicleLimit is shared across all owners + admin
     const companyFilter = this.companyIdFilter(companyId);

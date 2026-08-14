@@ -1,4 +1,9 @@
-export const STORAGE_FOLDERS = ['receipts', 'vehicles', 'profiles'] as const;
+export const STORAGE_FOLDERS = [
+  'receipts',
+  'vehicles',
+  'profiles',
+  'companies',
+] as const;
 export type StorageFolder = (typeof STORAGE_FOLDERS)[number];
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;

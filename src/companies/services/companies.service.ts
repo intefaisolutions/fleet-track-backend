@@ -24,6 +24,7 @@ import { PasswordService } from '../../auth/services/password.service';
 import { LicensesService } from '../../licenses/services/licenses.service';
 import { LicenseValidationService } from '../../licenses/services/license-validation.service';
 import { MailService } from '../../mail/mail.service';
+import { StorageService } from '../../storage/services/storage.service';
 import { User, UserDocument } from '../../users/schemas/user.schema';
 import { Subscription, SubscriptionDocument } from '../../subscriptions/schemas/subscription.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
@@ -120,6 +121,7 @@ export class CompaniesService {
     private readonly licenseValidation: LicenseValidationService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly storageService: StorageService,
   ) {}
 
   private async assertContactUnique(
@@ -414,8 +416,11 @@ export class CompaniesService {
       undefined;
 
     const expenseRow = expenseStats[0];
+    const logoViewUrl = await this.storageService.toViewUrl(item.logoUrl);
     const enriched = {
       ...item,
+      logoUrl: item.logoUrl,
+      logoViewUrl: logoViewUrl ?? item.logoUrl,
       licenseKey: licenseDetails?.licenseKey,
       licenseValidUntil: licenseValidUntil
         ? new Date(licenseValidUntil).toISOString()
@@ -434,7 +439,7 @@ export class CompaniesService {
               : undefined,
             originalPrice: subscription.originalPrice,
             amountPaid: subscription.amountPaid,
-            vehicleLimit: subscription.vehicleLimit ?? item.vehicleLimit,
+            vehicleLimit: item.vehicleLimit ?? subscription.vehicleLimit,
           }
         : null,
       stats: {
@@ -621,10 +626,27 @@ export class CompaniesService {
       await this.assertContactUnique(email, phone, id);
     }
 
+    let logoUrl = dto.logoUrl;
+    if (logoUrl?.startsWith('data:image/')) {
+      // Legacy clients still send Base64 — upload to S3/storage and persist URL only
+      logoUrl = await this.uploadLogoDataUrl(id, logoUrl);
+    } else if (logoUrl != null && logoUrl !== '') {
+      if (!/^https?:\/\//i.test(logoUrl)) {
+        throw new BadRequestException(
+          'logoUrl must be an https image URL from storage upload (not Base64)',
+        );
+      }
+    }
+
     try {
       const item = await this.companyModel.findByIdAndUpdate(
         id,
-        { ...dto, ...(dto.email ? { email } : {}), ...(dto.phone ? { phone } : {}) },
+        {
+          ...dto,
+          ...(dto.email ? { email } : {}),
+          ...(dto.phone ? { phone } : {}),
+          ...(logoUrl !== undefined ? { logoUrl } : {}),
+        },
         { returnDocument: 'after' },
       );
       return this.responseService.success('Company updated successfully', item);
@@ -632,6 +654,25 @@ export class CompaniesService {
       this.handleMongoDuplicate(err);
       throw err;
     }
+  }
+
+  /** Convert data:image/...;base64,... → storage public URL */
+  private async uploadLogoDataUrl(companyId: string, dataUrl: string) {
+    const match = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/s.exec(dataUrl);
+    if (!match) {
+      throw new BadRequestException('Invalid logo data URL');
+    }
+    const mimeType = match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    const uploaded = await this.storageService.uploadImage({
+      folder: 'companies',
+      buffer,
+      mimeType,
+      originalName: `logo.${mimeType.split('/')[1] || 'png'}`,
+      userId: companyId,
+      companyId,
+    });
+    return uploaded.url;
   }
 
   async remove(id: string) {
