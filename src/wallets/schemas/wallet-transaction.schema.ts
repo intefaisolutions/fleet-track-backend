@@ -37,6 +37,28 @@ export class WalletTransaction {
   @Prop()
   description?: string;
 
+  /** Days already used on the previous plan when this credit was generated */
+  @Prop()
+  usedDays?: number;
+
+  /** Value of days already used (deducted from old plan price) */
+  @Prop()
+  usedAmount?: number;
+
+  /** Unused days left on previous plan */
+  @Prop()
+  remainingDays?: number;
+
+  @Prop()
+  fromPlan?: string;
+
+  @Prop()
+  toPlan?: string;
+
+  /** UPGRADED | DOWNGRADED | RENEWED */
+  @Prop()
+  changeAction?: string;
+
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Payment' })
   paymentId?: Types.ObjectId;
 

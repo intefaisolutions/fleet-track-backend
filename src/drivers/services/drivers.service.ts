@@ -211,7 +211,7 @@ export class DriversService {
       const driver = await this.driverModel.create({
         fullName: dto.fullName.trim(),
         phone,
-        licenseNumber: dto.licenseNumber.trim(),
+        licenseNumber: dto.licenseNumber.trim().toUpperCase().replace(/[\s-]/g, ''),
         status: dto.status ?? DriverStatus.ACTIVE,
         companyId,
         userId: user._id,

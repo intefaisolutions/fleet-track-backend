@@ -362,7 +362,6 @@ export class CompaniesService {
       driverCount,
       expenseStats,
       ownerCount,
-      adminCount,
     ] = await Promise.all([
       this.licensesService.getDetailsForCompany(id),
       this.subscriptionModel.findOne({ companyId: companyOid }).lean(),
@@ -381,13 +380,10 @@ export class CompaniesService {
       this.userModel.countDocuments(
         withNotDeleted({ companyId: companyOid, role: UserRole.VEHICLE_OWNER }),
       ),
-      this.userModel.countDocuments(
-        withNotDeleted({
-          companyId: companyOid,
-          role: { $in: [UserRole.COMPANY_ADMIN] },
-        }),
-      ),
     ]);
+
+    // maxAdmins seats are for invited sub-admins only — primary COMPANY_ADMIN is excluded
+    const adminCount = (item.subAdmins ?? []).length;
 
     const licenseValidUntil =
       licenseDetails?.validUntil ??
@@ -467,12 +463,9 @@ export class CompaniesService {
         .find(
           withNotDeleted({
             companyId: companyOid,
+            // Primary / sub COMPANY_ADMIN are not "fleet users" — Owners & Drivers only
             role: {
-              $in: [
-                UserRole.COMPANY_ADMIN,
-                UserRole.VEHICLE_OWNER,
-                UserRole.DRIVER,
-              ],
+              $in: [UserRole.VEHICLE_OWNER, UserRole.DRIVER],
             },
           }),
         )
@@ -723,6 +716,7 @@ export class CompaniesService {
     return this.responseService.success('Company sub-admins fetched', {
       admins,
       stats,
+      maxAdmins: company.maxAdmins,
     });
   }
 
@@ -737,7 +731,7 @@ export class CompaniesService {
 
     if (existing.length >= company.maxAdmins) {
       throw new BadRequestException(
-        `Sub-admin limit reached (${company.maxAdmins}). Upgrade your plan for more seats.`,
+        `Sub-admin limit reached (${existing.length}/${company.maxAdmins}). Primary Company Admin is not counted in this limit. Upgrade your plan for more seats.`,
       );
     }
 
@@ -816,6 +810,7 @@ export class CompaniesService {
         pending: admins.filter((a) => a.status === 'PENDING').length,
         rolesDefined: permissionKeys.size,
       },
+      maxAdmins: updated?.maxAdmins ?? company.maxAdmins,
     });
   }
 
@@ -883,6 +878,7 @@ export class CompaniesService {
         pending: admins.filter((a) => a.status === 'PENDING').length,
         rolesDefined: permissionKeys.size,
       },
+      maxAdmins: company.maxAdmins,
     });
   }
 
@@ -928,6 +924,7 @@ export class CompaniesService {
         pending: admins.filter((a) => a.status === 'PENDING').length,
         rolesDefined: permissionKeys.size,
       },
+      maxAdmins: updated.maxAdmins,
     });
   }
 

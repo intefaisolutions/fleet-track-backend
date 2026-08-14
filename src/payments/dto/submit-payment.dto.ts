@@ -1,5 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
+import {
+  IsDateString,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Matches,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { BillingPeriod, PaymentMethodType } from '../../common/enums';
 
 export class SubmitPaymentDto {
@@ -18,9 +29,17 @@ export class SubmitPaymentDto {
   @Min(0)
   amount: number;
 
-  @ApiProperty({ example: 'TXN123456789' })
+  @ApiProperty({
+    example: 'TXN123456789',
+    description: 'UPI Transaction ID or Bank UTR / reference number',
+  })
   @IsString()
-  @MinLength(4)
+  @MinLength(8)
+  @MaxLength(40)
+  @Matches(/^[A-Za-z0-9/_-]+$/, {
+    message:
+      'Transaction ID can only contain letters, numbers, -, _ and /',
+  })
   transactionId: string;
 
   @ApiPropertyOptional({
@@ -36,4 +55,17 @@ export class SubmitPaymentDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiProperty({
+    description: 'When the payment was made (ISO date-time) — required for manual UPI/Bank',
+  })
+  @IsDateString()
+  paidAt: string;
+
+  @ApiProperty({
+    description: 'Payment screenshot / receipt URL — required for manual UPI/Bank',
+  })
+  @IsString()
+  @IsUrl({ require_tld: false })
+  proofUrl: string;
 }

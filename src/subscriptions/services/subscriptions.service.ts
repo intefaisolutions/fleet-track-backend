@@ -38,6 +38,10 @@ export class SubscriptionsService {
     return Math.round(num * 100) / 100;
   }
 
+  private formatInr(amount: number): string {
+    return `₹${this.roundToTwo(amount).toLocaleString('en-IN')}`;
+  }
+
   async calculateProration(subscription: SubscriptionDocument) {
     if (!subscription.startDate || !subscription.currentPeriodEnd) {
       return { usedAmount: 0, remainingCredit: 0, elapsedDays: 0, totalDays: 0 };
@@ -77,22 +81,42 @@ export class SubscriptionsService {
       if (!newPlan) throw new NotFoundException('New plan not found');
 
       // 1. Calculate Proration
-      const { remainingCredit } = await this.calculateProration(currentSub);
+      const { usedAmount, remainingCredit, elapsedDays, totalDays } =
+        await this.calculateProration(currentSub);
+      const usedDays = Math.floor(elapsedDays);
+      const remainingDays = Math.max(0, Math.ceil(totalDays - elapsedDays));
+      const oldPlanType = currentSub.planType;
 
       // 2. Add credit to wallet if there's remaining
       if (remainingCredit > 0) {
         const prevBalance = company.walletBalance;
         company.walletBalance = this.roundToTwo(company.walletBalance + remainingCredit);
-        
-        await this.walletModel.create([{
-          companyId: company._id,
-          type: TransactionType.CREDIT,
-          amount: remainingCredit,
-          reason: 'Proration credit from plan change',
-          previousBalance: prevBalance,
-          currentBalance: company.walletBalance,
-          referenceSubscriptionId: currentSub._id,
-        }], { session });
+
+        await this.walletModel.create(
+          [
+            {
+              companyId: company._id,
+              type: TransactionType.CREDIT,
+              amount: remainingCredit,
+              reason: 'Proration credit from plan change',
+              description: `You used ${oldPlanType} for ${usedDays} day${usedDays === 1 ? '' : 's'} (${this.formatInr(usedAmount)} used). Unused value ${this.formatInr(remainingCredit)} credited to wallet.`,
+              previousBalance: prevBalance,
+              currentBalance: company.walletBalance,
+              referenceSubscriptionId: currentSub._id,
+              referencePlan: oldPlanType,
+              usedDays,
+              usedAmount,
+              remainingDays,
+              fromPlan: oldPlanType,
+              toPlan: newPlan.planType,
+              changeAction:
+                planPriceForPeriod(newPlan, billingPeriod) >= (currentSub.originalPrice || 0)
+                  ? 'UPGRADED'
+                  : 'DOWNGRADED',
+            },
+          ],
+          { session },
+        );
       }
 
       // 3. Purchase new plan using wallet — price depends on billing period
@@ -112,15 +136,40 @@ export class SubscriptionsService {
         const prevBalance = company.walletBalance;
         company.walletBalance = this.roundToTwo(company.walletBalance - walletUsed);
 
-        await this.walletModel.create([{
-          companyId: company._id,
-          type: TransactionType.DEBIT,
-          amount: walletUsed,
-          reason: `Purchased ${newPlan.planType} plan (${billingPeriod})`,
-          previousBalance: prevBalance,
-          currentBalance: company.walletBalance,
-          referenceSubscriptionId: currentSub._id,
-        }], { session });
+        const changeVerb =
+          newPrice > (currentSub.originalPrice || 0)
+            ? 'Upgrade'
+            : newPrice < (currentSub.originalPrice || 0)
+              ? 'Downgrade'
+              : 'Plan change';
+
+        await this.walletModel.create(
+          [
+            {
+              companyId: company._id,
+              type: TransactionType.DEBIT,
+              amount: walletUsed,
+              reason: `Purchased ${newPlan.planType} plan (${billingPeriod})`,
+              description: `${changeVerb}: ${oldPlanType} → ${newPlan.displayName || newPlan.planType}. Wallet paid ${this.formatInr(walletUsed)} toward ${billingPeriod.toLowerCase()} plan.`,
+              previousBalance: prevBalance,
+              currentBalance: company.walletBalance,
+              referenceSubscriptionId: currentSub._id,
+              referencePlan: newPlan.planType,
+              fromPlan: oldPlanType,
+              toPlan: newPlan.planType,
+              changeAction:
+                newPrice > (currentSub.originalPrice || 0)
+                  ? 'UPGRADED'
+                  : newPrice < (currentSub.originalPrice || 0)
+                    ? 'DOWNGRADED'
+                    : 'RENEWED',
+              usedDays,
+              usedAmount,
+              remainingDays,
+            },
+          ],
+          { session },
+        );
       }
 
       // 4. Update Subscription — period starts on purchase/change date
@@ -153,20 +202,31 @@ export class SubscriptionsService {
       await company.save({ session });
 
       // 5. Save History
-      await this.historyModel.create([{
-        companyId: company._id,
-        subscriptionId: currentSub._id,
-        action: calculatedAction,
-        oldPlanId: oldPlanId,
-        newPlanId: newPlan._id,
-        oldPrice: oldPrice,
-        newPrice: newPrice,
-        creditGenerated: remainingCredit,
-        walletUsed: walletUsed,
-        paymentCollected: paymentRequired,
-        startDate: now,
-        endDate: periodEnd,
-      }], { session });
+      await this.historyModel.create(
+        [
+          {
+            companyId: company._id,
+            subscriptionId: currentSub._id,
+            action: calculatedAction,
+            oldPlanId: oldPlanId,
+            newPlanId: newPlan._id,
+            oldPrice: oldPrice,
+            newPrice: newPrice,
+            creditGenerated: remainingCredit,
+            walletUsed: walletUsed,
+            paymentCollected: paymentRequired,
+            usedDays,
+            usedAmount,
+            remainingDays,
+            oldPlanType,
+            newPlanType: newPlan.planType,
+            startDate: now,
+            endDate: periodEnd,
+            notes: `Used ${usedDays} day(s) of previous plan (${this.formatInr(usedAmount)}). Unused credit ${this.formatInr(remainingCredit)}.`,
+          },
+        ],
+        { session },
+      );
 
       // 6. Tie payment record if provided
       if (paymentId && paymentRequired > 0) {
@@ -199,6 +259,31 @@ export class SubscriptionsService {
     const items = await this.subModel
       .find(withNotDeleted(filter))
       .sort({ createdAt: -1 });
+
+    // Keep active subscription aligned with company.planType / vehicleLimit
+    // (license registration is source of truth; stale FREE subs caused wrong UI).
+    if (companyId) {
+      const company = await this.companyModel.findById(companyId).lean();
+      if (company?.planType) {
+        const active =
+          items.find((s) => s.status === SubscriptionStatus.ACTIVE) ??
+          items.find((s) => s.status === SubscriptionStatus.TRIAL) ??
+          items[0];
+        if (
+          active &&
+          (active.planType !== company.planType ||
+            (company.vehicleLimit != null &&
+              active.vehicleLimit !== company.vehicleLimit))
+        ) {
+          active.planType = company.planType;
+          if (company.vehicleLimit != null) {
+            active.vehicleLimit = company.vehicleLimit;
+          }
+          await active.save();
+        }
+      }
+    }
+
     return this.responseService.success('Subscriptions fetched successfully', items);
   }
 

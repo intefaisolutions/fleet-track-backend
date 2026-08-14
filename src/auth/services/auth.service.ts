@@ -419,6 +419,13 @@ export class AuthService {
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
+    if (dto.email) {
+      const current = await this.usersService.findById(userId);
+      if (!current || current.role !== UserRole.SUPER_ADMIN) {
+        throw new ForbiddenException('Only Super Admin can change email');
+      }
+    }
+
     const result = await this.usersService.update(userId, dto);
     return this.responseService.success('Profile updated successfully', result.data);
   }

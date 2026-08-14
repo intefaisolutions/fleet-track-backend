@@ -168,17 +168,58 @@ export class PaymentsService {
       );
     }
 
+    const txnId = dto.transactionId.trim().toUpperCase();
+    if (method === PaymentMethodType.BANK_TRANSFER) {
+      const utr = txnId.replace(/\s+/g, '');
+      if (utr.length < 8 || utr.length > 30 || !/^[A-Z0-9]+$/.test(utr)) {
+        throw new BadRequestException(
+          'Enter a valid bank UTR / reference (8–30 letters and numbers)',
+        );
+      }
+    } else if (txnId.length < 8 || txnId.length > 40 || !/^[A-Z0-9/_-]+$/.test(txnId)) {
+      throw new BadRequestException(
+        'Enter a valid UPI Transaction ID (8–40 characters)',
+      );
+    }
+
+    if (!dto.paidAt) {
+      throw new BadRequestException('Payment date & time is required');
+    }
+    const paidAtDate = new Date(dto.paidAt);
+    if (Number.isNaN(paidAtDate.getTime())) {
+      throw new BadRequestException('Invalid payment date & time');
+    }
+    if (paidAtDate.getTime() > Date.now() + 5 * 60 * 1000) {
+      throw new BadRequestException('Payment date cannot be in the future');
+    }
+    if (paidAtDate.getTime() < Date.now() - 60 * 24 * 60 * 60 * 1000) {
+      throw new BadRequestException('Payment date cannot be older than 60 days');
+    }
+
+    const proofUrl = dto.proofUrl?.trim();
+    if (!proofUrl) {
+      throw new BadRequestException(
+        'Payment screenshot / receipt is required for manual UPI and bank transfer',
+      );
+    }
+
+    const planType = dto.planType.toUpperCase().trim();
+    const plan = await this.planModel.findOne({ planType, isActive: true });
+
     const created = await this.paymentModel.create({
-      planType: dto.planType.toUpperCase().trim(),
+      planType,
+      planId: plan?._id,
       billingPeriod: dto.billingPeriod ?? BillingPeriod.MONTHLY,
       amount: dto.amount,
-      transactionId: dto.transactionId.trim(),
+      transactionId: txnId.replace(/\s+/g, ''),
       notes: dto.notes?.trim(),
       paymentMethod: method,
       paymentGateway: 'MANUAL',
       companyId,
       submittedBy: userId,
       status: PaymentVerificationStatus.PENDING,
+      paidAt: paidAtDate,
+      proofUrl,
     });
 
     try {
@@ -189,13 +230,14 @@ export class PaymentsService {
         companyId,
         type: NotificationType.PAYMENT_VERIFICATION,
         title: 'Payment pending verification',
-        message: `${company?.name ?? 'A company'} submitted a payment of ₹${dto.amount} (${dto.planType}).`,
+        message: `${company?.name ?? 'A company'} submitted a ${method} payment of ₹${dto.amount} for ${planType}. Review required before subscription activates.`,
         entityType: 'payment',
         entityId: created._id.toString(),
         meta: {
           amount: dto.amount,
-          planType: dto.planType,
+          planType,
           status: PaymentVerificationStatus.PENDING,
+          paymentMethod: method,
         },
       });
     } catch (err) {
@@ -203,7 +245,7 @@ export class PaymentsService {
     }
 
     return this.responseService.created(
-      'Payment submitted. Awaiting verification. Your plan will activate after approval.',
+      'Payment request submitted. Status: Pending Verification. Your plan will activate only after Super Admin approval.',
       created,
     );
   }
@@ -215,7 +257,9 @@ export class PaymentsService {
 
     const items = await this.paymentModel
       .find(filter)
-      .populate('companyId', 'name email planType')
+      .populate('companyId', 'name email planType phone')
+      .populate('submittedBy', 'fullName email phone')
+      .populate('verifiedBy', 'fullName email')
       .sort({ createdAt: -1 });
 
     return this.responseService.success('Payments fetched successfully', items);
@@ -228,16 +272,54 @@ export class PaymentsService {
       throw new BadRequestException('Payment is not pending verification');
     }
 
+    // Only manual payment requests are approved here (Razorpay auto-verifies)
+    if (payment.paymentGateway && payment.paymentGateway !== 'MANUAL') {
+      throw new BadRequestException(
+        'Only manual UPI / Bank Transfer requests can be approved here',
+      );
+    }
+
+    const planType = (payment.planType || '').toUpperCase().trim();
+    if (!planType) {
+      throw new BadRequestException('Payment has no plan type');
+    }
+
+    const billingPeriod = payment.billingPeriod ?? BillingPeriod.MONTHLY;
+    let planId = payment.planId;
+    if (!planId) {
+      const plan = await this.planModel.findOne({ planType, isActive: true });
+      planId = plan?._id as Types.ObjectId | undefined;
+    }
+
     payment.status = PaymentVerificationStatus.VERIFIED;
     payment.verifiedBy = new Types.ObjectId(verifiedBy);
     payment.verifiedAt = new Date();
+    if (planId) payment.planId = planId;
     await payment.save();
+
+    // Activate only after Super Admin approval (never on manual submit)
+    if (planId) {
+      try {
+        await this.subscriptionsService.changePlan(
+          payment.companyId.toString(),
+          planId.toString(),
+          payment._id.toString(),
+          billingPeriod,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `changePlan on verify failed, falling back to activateCompanyPlan: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
 
     await this.activateCompanyPlan(
       payment.companyId,
-      payment.planType || '',
-      payment.billingPeriod ?? BillingPeriod.MONTHLY,
-      payment.planId,
+      planType,
+      billingPeriod,
+      planId,
     );
 
     try {
@@ -247,17 +329,20 @@ export class PaymentsService {
         userIds: adminIds,
         companyId,
         type: NotificationType.PAYMENT_VERIFICATION,
-        title: 'Payment verified',
-        message: `Your payment of ₹${payment.amount} was verified. Plan upgraded.`,
+        title: 'Payment verified successfully',
+        message: `Your payment was verified. Your ${planType} subscription is now active.`,
         entityType: 'payment',
         entityId: payment._id.toString(),
-        meta: { status: PaymentVerificationStatus.VERIFIED, amount: payment.amount },
+        meta: { status: PaymentVerificationStatus.VERIFIED, amount: payment.amount, planType },
       });
     } catch (err) {
       this.logger.warn('Payment verify notification failed', err);
     }
 
-    return this.responseService.success('Payment verified and plan upgraded', payment);
+    return this.responseService.success(
+      'Payment approved. Subscription is now active.',
+      payment,
+    );
   }
 
   async reject(id: string, verifiedBy: string, rejectionReason?: string) {
@@ -282,8 +367,8 @@ export class PaymentsService {
         type: NotificationType.PAYMENT_VERIFICATION,
         title: 'Payment rejected',
         message: rejectionReason
-          ? `Your payment was rejected: ${rejectionReason}`
-          : 'Your payment was rejected. Please contact support.',
+          ? `Payment rejected: ${rejectionReason}. Please submit a new payment proof.`
+          : 'Payment rejected: Amount could not be verified. Please submit a new payment proof.',
         entityType: 'payment',
         entityId: payment._id.toString(),
         meta: { status: PaymentVerificationStatus.REJECTED },
@@ -300,8 +385,6 @@ export class PaymentsService {
     companyId: string,
     userId: string,
   ) {
-    this.assertRazorpayConfigured();
-
     const normalized = dto.planType.toUpperCase().trim();
     const billingPeriod = dto.billingPeriod ?? BillingPeriod.MONTHLY;
     const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
@@ -309,28 +392,49 @@ export class PaymentsService {
       throw new BadRequestException(`Plan "${normalized}" not found or inactive`);
     }
 
-    const listPrice =
-      billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
-    if (!listPrice || listPrice <= 0) {
-      throw new BadRequestException('Plan is free or price is not set');
+    const company = await this.companyModel.findById(companyId);
+    if (!company) {
+      throw new NotFoundException('Company not found');
     }
 
+    const currentPlanMeta = company.planType
+      ? await this.planModel.findOne({ planType: company.planType }).lean()
+      : null;
+    const currentMonthly = currentPlanMeta?.monthlyPriceInr ?? 0;
+    const targetMonthly = plan.monthlyPriceInr ?? 0;
+    const isDowngrade = targetMonthly < currentMonthly;
+    const isSameOrFree =
+      targetMonthly === currentMonthly || (plan.monthlyPriceInr ?? 0) <= 0;
+
+    const listPrice =
+      billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
+
     let finalAmountInr = listPrice;
+    let previewData: {
+      amountToPay?: number;
+      creditGenerated?: number;
+      walletUsed?: number;
+      usedDays?: number;
+      remainingDays?: number;
+      currentPrice?: number;
+      newPrice?: number;
+    } | null = null;
     try {
       const preview = await this.subscriptionsService.previewPlanChange(
         companyId,
         plan._id.toString(),
         billingPeriod,
       );
-      if (typeof preview?.data?.amountToPay === 'number') {
-        finalAmountInr = preview.data.amountToPay;
+      previewData = preview?.data ?? null;
+      if (typeof previewData?.amountToPay === 'number') {
+        finalAmountInr = previewData.amountToPay;
       }
     } catch {
-      // No existing subscription / preview unavailable — charge list price
       finalAmountInr = listPrice;
     }
 
-    if (finalAmountInr < 1) {
+    // Downgrade / free / fully wallet-covered: apply plan change — never open Razorpay
+    if (isDowngrade || isSameOrFree || finalAmountInr < 1 || listPrice <= 0) {
       const created = await this.paymentModel.create({
         companyId,
         submittedBy: userId,
@@ -339,12 +443,16 @@ export class PaymentsService {
         planId: plan._id,
         billingPeriod,
         amount: 0,
-        transactionId: `WALLET_${Date.now()}`,
+        transactionId: `PLAN_${Date.now()}`,
         paymentMethod: PaymentMethodType.RAZORPAY,
-        paymentGateway: 'WALLET',
+        paymentGateway: isDowngrade ? 'DOWNGRADE' : 'WALLET',
         verifiedBy: userId,
         verifiedAt: new Date(),
-        notes: 'Paid fully via wallet credits (no Razorpay charge)',
+        notes: isDowngrade
+          ? 'Plan downgrade confirmed (no Razorpay payment)'
+          : listPrice <= 0
+            ? 'Free plan change (no payment required)'
+            : 'Paid fully via wallet / proration credits (no Razorpay charge)',
       });
 
       try {
@@ -354,8 +462,12 @@ export class PaymentsService {
           created._id.toString(),
           billingPeriod,
         );
-      } catch {
-        // Ensure company limits still apply even if changePlan requires existing sub
+      } catch (err) {
+        this.logger.warn(
+          `changePlan during non-Razorpay switch failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       }
       await this.activateCompanyPlan(
         companyId,
@@ -364,13 +476,25 @@ export class PaymentsService {
         plan._id as Types.ObjectId,
       );
 
-      return this.responseService.success('Plan upgraded using wallet balance', {
-        orderId: 'WALLET_PAID',
-        amount: 0,
-        currency: 'INR',
-        keyId: process.env.RAZORPAY_KEY_ID,
-      });
+      return this.responseService.success(
+        isDowngrade
+          ? 'Plan downgraded successfully'
+          : listPrice <= 0
+            ? 'Plan changed successfully (free plan)'
+            : 'Plan changed using wallet balance',
+        {
+          orderId: 'WALLET_PAID',
+          amount: 0,
+          currency: 'INR',
+          skippedRazorpay: true,
+          changeKind: isDowngrade ? 'downgrade' : 'upgrade',
+          preview: previewData,
+        },
+      );
     }
+
+    // Upgrade with amount due — Razorpay checkout
+    this.assertRazorpayConfigured();
 
     const options = {
       amount: Math.round(finalAmountInr * 100),
@@ -393,6 +517,8 @@ export class PaymentsService {
         keyId: process.env.RAZORPAY_KEY_ID,
         planType: normalized,
         billingPeriod,
+        changeKind: 'upgrade',
+        preview: previewData,
       });
     } catch (error: unknown) {
       const message =

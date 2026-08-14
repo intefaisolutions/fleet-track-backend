@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  Matches,
   MinLength,
 } from 'class-validator';
 import { DriverStatus } from '../../common/enums';
@@ -28,8 +29,12 @@ export class CreateDriverDto {
   @MinLength(8)
   password: string;
 
-  @ApiProperty({ example: 'DL123456789' })
+  @ApiProperty({ example: 'DL1420110012345' })
   @IsString()
+  @Matches(/^[A-Za-z]{2}[A-Za-z0-9]{6,14}$/, {
+    message:
+      'License number must start with a 2-letter state code (e.g. DL1420110012345)',
+  })
   licenseNumber: string;
 
   @ApiPropertyOptional({ enum: DriverStatus })

@@ -43,6 +43,21 @@ export class SubscriptionHistory {
   @Prop({ default: 0 })
   paymentCollected: number;
 
+  @Prop({ default: 0 })
+  usedDays?: number;
+
+  @Prop({ default: 0 })
+  usedAmount?: number;
+
+  @Prop({ default: 0 })
+  remainingDays?: number;
+
+  @Prop()
+  oldPlanType?: string;
+
+  @Prop()
+  newPlanType?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'User' })
   performedBy?: Types.ObjectId;
 

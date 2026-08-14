@@ -77,6 +77,14 @@ export class Payment {
 
   @Prop({ trim: true })
   notes?: string;
+
+  /** When the company says they made the payment */
+  @Prop()
+  paidAt?: Date;
+
+  /** Optional screenshot / receipt URL (Supabase) */
+  @Prop({ trim: true })
+  proofUrl?: string;
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
