@@ -44,7 +44,10 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
       // Active drivers: keep lastActivity fresh (throttled) so they are not logged out
       await this.usersService.touchDriverActivityIfNeeded(user._id.toString());
-    } else if (payload.role === ROLES.SUPPORT_ADMIN) {
+    } else if (
+      payload.role === ROLES.SUPPORT_ADMIN ||
+      payload.role === ROLES.COMPANY_ADMIN
+    ) {
       const user = await this.usersService.findById(payload.sub);
       if (!user || user.status !== UserStatus.ACTIVE) {
         throw new UnauthorizedException('Account is inactive or not found');

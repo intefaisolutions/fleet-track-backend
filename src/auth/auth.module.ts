@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { MongooseModule } from '@nestjs/mongoose';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './controllers/auth.controller';
@@ -9,11 +10,15 @@ import { PasswordService } from './services/password.service';
 import { UsersModule } from '../users/users.module';
 import { LicensesModule } from '../licenses/licenses.module';
 import { JwtStrategy } from '../guards/jwt.strategy';
+import { Company, CompanySchema } from '../companies/schemas/company.schema';
 
 @Module({
   imports: [
     forwardRef(() => UsersModule),
     LicensesModule,
+    MongooseModule.forFeature([
+      { name: Company.name, schema: CompanySchema },
+    ]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],

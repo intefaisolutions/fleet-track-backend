@@ -36,6 +36,27 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
+    // Company sub-admins: enforce explicit grant list when present (no licenses/companies keys).
+    if (
+      user.role === ROLES.COMPANY_ADMIN &&
+      Array.isArray(user.permissions) &&
+      user.permissions.length > 0
+    ) {
+      const fullRoleSignal =
+        user.permissions.includes('companies:read') ||
+        user.permissions.includes('licenses:read');
+      if (!fullRoleSignal) {
+        const granted = new Set(user.permissions);
+        const ok = requiredPermissions.some((p) => granted.has(p));
+        if (!ok) {
+          throw new ForbiddenException(
+            `Missing required permission(s): ${requiredPermissions.join(', ')}`,
+          );
+        }
+        return true;
+      }
+    }
+
     if (!roleHasAnyPermission(user.role, requiredPermissions)) {
       throw new ForbiddenException(
         `Missing required permission(s): ${requiredPermissions.join(', ')}`,

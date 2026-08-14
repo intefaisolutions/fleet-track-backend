@@ -878,8 +878,14 @@ export class CompaniesService {
     company.markModified('subAdmins');
     await company.save();
 
+    // Match string + ObjectId companyId (legacy rows) so User.permissions stay in sync
+    // with company.subAdmins (sidebar reads User / login profile).
     const subUser = await this.userModel.findOne(
-      withNotDeleted({ email: normalized, companyId }),
+      withNotDeleted({
+        email: normalized,
+        role: UserRole.COMPANY_ADMIN,
+        ...companyIdMatch(companyId),
+      }),
     );
     if (subUser) {
       subUser.permissions = permissions;
@@ -887,6 +893,10 @@ export class CompaniesService {
         subUser.fullName = nextName;
       }
       await subUser.save();
+    } else {
+      this.logger.warn(
+        `Sub-admin permissions updated on company but user not found for ${normalized}`,
+      );
     }
 
     const admins = company.subAdmins ?? [];

@@ -7,6 +7,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { UserRole, UserStatus } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
 import { ROLE_PERMISSIONS } from '../../constants/role-permissions.constant';
@@ -29,6 +31,10 @@ import { MailService } from '../../mail/mail.service';
 import { LicensesService } from '../../licenses/services/licenses.service';
 import { ROLES } from '../../constants/roles.constant';
 import { normalizeEmail } from '../../common/utils/contact.util';
+import {
+  Company,
+  CompanyDocument,
+} from '../../companies/schemas/company.schema';
 
 @Injectable()
 export class AuthService {
@@ -42,6 +48,8 @@ export class AuthService {
     private readonly responseService: ResponseService,
     private readonly mailService: MailService,
     private readonly licensesService: LicensesService,
+    @InjectModel(Company.name)
+    private readonly companyModel: Model<CompanyDocument>,
   ) {}
 
   private async assertLicenseAccessForUser(user: UserDocument) {
@@ -53,25 +61,78 @@ export class AuthService {
     );
   }
 
-  private resolvePermissions(user: {
+  /**
+   * Company sub-admins: `company.subAdmins[].permissions` is source of truth.
+   * Syncs User.permissions when they drift (fixes sidebar not showing grants).
+   */
+  private async resolveAccess(user: {
     role: string;
+    email?: string;
+    companyId?: string | { toString(): string } | null;
     permissions?: string[] | null;
-  }): string[] {
-    const rolePerms =
-      ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? [];
-    // Support admins + company sub-admins store an explicit grant list.
-    if (
-      user.role === UserRole.SUPPORT_ADMIN ||
-      (user.role === UserRole.COMPANY_ADMIN &&
-        Array.isArray(user.permissions) &&
-        user.permissions.length > 0)
-    ) {
-      return user.permissions ?? [];
+  }): Promise<{ permissions: string[]; isSubAdmin: boolean }> {
+    if (user.role === UserRole.SUPPORT_ADMIN) {
+      return { permissions: user.permissions ?? [], isSubAdmin: false };
     }
-    return rolePerms;
+
+    if (user.role === UserRole.COMPANY_ADMIN) {
+      const companyId = user.companyId ? String(user.companyId) : '';
+      const email = user.email ? normalizeEmail(user.email) : '';
+      if (companyId && email) {
+        const company = await this.companyModel
+          .findById(companyId)
+          .select('subAdmins')
+          .lean();
+        const entry = company?.subAdmins?.find(
+          (a) => normalizeEmail(a.email) === email,
+        );
+        if (entry) {
+          return {
+            permissions: [...(entry.permissions ?? [])],
+            isSubAdmin: true,
+          };
+        }
+      }
+
+      const stored = user.permissions ?? [];
+      if (stored.length > 0) {
+        const fullRoleSignal =
+          stored.includes('companies:read') || stored.includes('licenses:read');
+        if (!fullRoleSignal) {
+          return { permissions: stored, isSubAdmin: true };
+        }
+      }
+
+      return {
+        permissions:
+          ROLE_PERMISSIONS[ROLES.COMPANY_ADMIN as keyof typeof ROLE_PERMISSIONS] ??
+          [],
+        isSubAdmin: false,
+      };
+    }
+
+    return {
+      permissions:
+        ROLE_PERMISSIONS[user.role as keyof typeof ROLE_PERMISSIONS] ?? [],
+      isSubAdmin: false,
+    };
   }
 
-  private sanitizeUser(user: UserDocument) {
+  private permissionsEqual(a: string[] = [], b: string[] = []): boolean {
+    if (a.length !== b.length) return false;
+    const setB = new Set(b);
+    return a.every((p) => setB.has(p));
+  }
+
+  private async sanitizeUser(user: UserDocument) {
+    const { permissions, isSubAdmin } = await this.resolveAccess(user);
+    if (
+      isSubAdmin &&
+      !this.permissionsEqual(user.permissions ?? [], permissions)
+    ) {
+      user.permissions = permissions;
+      await user.save();
+    }
     return {
       id: user._id,
       fullName: user.fullName,
@@ -84,7 +145,8 @@ export class AuthService {
       companyId: user.companyId,
       lastLogin: user.lastLogin,
       lastActivity: user.lastActivity,
-      permissions: this.resolvePermissions(user),
+      permissions,
+      isSubAdmin,
     };
   }
 
@@ -187,7 +249,7 @@ export class AuthService {
     return this.responseService.success('Login successful', {
       ...tokens,
       user: {
-        ...this.sanitizeUser(user),
+        ...(await this.sanitizeUser(user)),
         requiresLicenseActivation,
       },
       ...(licenseNotice ? { licenseNotice } : {}),
@@ -394,28 +456,24 @@ export class AuthService {
   }
 
   async profile(userId: string) {
-    const result = await this.usersService.findOne(userId);
-
-    if (result.data) {
-      const user = result.data as unknown as {
-        role: string;
-        companyId?: string | { toString(): string };
-        permissions?: string[];
-      };
-      const companyId = user.companyId ? String(user.companyId) : undefined;
-      const requiresLicenseActivation =
-        user.role === UserRole.COMPANY_ADMIN && companyId
-          ? await this.licensesService.companyRequiresLicenseActivation(companyId)
-          : false;
-
-      return this.responseService.success('Profile fetched successfully', {
-        ...JSON.parse(JSON.stringify(result.data)),
-        permissions: this.resolvePermissions(user),
-        requiresLicenseActivation,
-      });
+    const userDoc = await this.usersService.findById(userId);
+    if (!userDoc) {
+      return this.usersService.findOne(userId);
     }
 
-    return result;
+    const companyId = userDoc.companyId
+      ? String(userDoc.companyId)
+      : undefined;
+    const requiresLicenseActivation =
+      userDoc.role === UserRole.COMPANY_ADMIN && companyId
+        ? await this.licensesService.companyRequiresLicenseActivation(companyId)
+        : false;
+
+    const sanitized = await this.sanitizeUser(userDoc);
+    return this.responseService.success('Profile fetched successfully', {
+      ...sanitized,
+      requiresLicenseActivation,
+    });
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {
