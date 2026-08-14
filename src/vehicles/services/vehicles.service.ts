@@ -8,7 +8,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { NotificationType, UserRole } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
 import {
@@ -104,6 +104,30 @@ export class VehiclesService {
     };
   }
 
+  private idVariants(id: string): Array<string | Types.ObjectId> {
+    if (!Types.ObjectId.isValid(id)) return [id];
+    return [id, new Types.ObjectId(id)];
+  }
+
+  /**
+   * Enforce 1 vehicle ↔ 1 driver: remove this driver from every other vehicle.
+   */
+  private async clearDriverFromOtherVehicles(
+    driverId: string,
+    keepVehicleId?: string,
+  ) {
+    if (!driverId) return;
+    await this.vehicleModel.updateMany(
+      withNotDeleted({
+        assignedDriverId: { $in: this.idVariants(driverId) },
+        ...(keepVehicleId
+          ? { _id: { $nin: this.idVariants(keepVehicleId) } }
+          : {}),
+      }),
+      { $unset: { assignedDriverId: '' } },
+    );
+  }
+
   private async assertRegistrationAvailable(
     companyId: string,
     registrationNumber: string,
@@ -176,6 +200,10 @@ export class VehiclesService {
 
     const payload = this.mapCreateDto(dto);
     await this.assertRegistrationAvailable(companyId, payload.registrationNumber);
+
+    if (payload.assignedDriverId) {
+      await this.clearDriverFromOtherVehicles(payload.assignedDriverId);
+    }
 
     const doc = {
       ...payload,
@@ -294,6 +322,14 @@ export class VehiclesService {
       dto.registrationNumber = normalized;
     }
 
+    const nextDriverId =
+      dto.assignedDriverId === null || dto.assignedDriverId === undefined
+        ? dto.assignedDriverId
+        : String(dto.assignedDriverId);
+    if (nextDriverId) {
+      await this.clearDriverFromOtherVehicles(nextDriverId, id);
+    }
+
     const item = await this.vehicleModel.findByIdAndUpdate(id, dto, {
       returnDocument: 'after',
     });
@@ -338,6 +374,7 @@ export class VehiclesService {
     if (ownerId) {
       await this.assertOwnerVehicle(id, ownerId);
     }
+    await this.clearDriverFromOtherVehicles(dto.driverId, id);
     const item = await this.vehicleModel.findByIdAndUpdate(
       id,
       { assignedDriverId: dto.driverId },
