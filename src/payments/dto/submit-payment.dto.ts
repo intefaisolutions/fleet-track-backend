@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNumber,
@@ -68,4 +69,12 @@ export class SubmitPaymentDto {
   @IsString()
   @IsUrl({ require_tld: false })
   proofUrl: string;
+
+  @ApiPropertyOptional({
+    description: 'Apply wallet toward plan on approval. Default true.',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  useWallet?: boolean;
 }

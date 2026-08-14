@@ -1,5 +1,5 @@
-import { IsEnum, IsNotEmpty, IsString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BillingPeriod } from '../../common/enums';
 
 export class CreateRazorpayOrderDto {
@@ -11,6 +11,14 @@ export class CreateRazorpayOrderDto {
   @ApiProperty({ enum: BillingPeriod, description: 'Billing Period (MONTHLY | YEARLY)' })
   @IsEnum(BillingPeriod)
   billingPeriod: BillingPeriod;
+
+  @ApiPropertyOptional({
+    description: 'Apply wallet balance toward this upgrade. Default true.',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  useWallet?: boolean;
 }
 
 export class VerifyRazorpayPaymentDto {
@@ -37,4 +45,12 @@ export class VerifyRazorpayPaymentDto {
   @ApiProperty({ enum: BillingPeriod })
   @IsEnum(BillingPeriod)
   billingPeriod: BillingPeriod;
+
+  @ApiPropertyOptional({
+    description: 'Must match the useWallet flag used when creating the order',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  useWallet?: boolean;
 }

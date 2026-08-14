@@ -71,6 +71,7 @@ export class SubscriptionsController {
       user.companyId,
       dto.newPlanId,
       dto.billingPeriod,
+      dto.useWallet !== false,
     );
   }
 
@@ -85,6 +86,7 @@ export class SubscriptionsController {
       dto.newPlanId,
       dto.paymentId,
       dto.billingPeriod,
+      dto.useWallet !== false,
     );
   }
 }

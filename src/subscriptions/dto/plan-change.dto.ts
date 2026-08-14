@@ -1,4 +1,4 @@
-import { IsEnum, IsMongoId, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsBoolean, IsEnum, IsMongoId, IsNotEmpty, IsOptional } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { BillingPeriod } from '../../common/enums';
 
@@ -15,4 +15,12 @@ export class PlanChangeDto {
   @IsOptional()
   @IsEnum(BillingPeriod)
   billingPeriod?: BillingPeriod;
+
+  @ApiPropertyOptional({
+    description: 'If true, apply wallet balance toward the new plan. Default true.',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  useWallet?: boolean;
 }

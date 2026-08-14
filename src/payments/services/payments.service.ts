@@ -205,12 +205,46 @@ export class PaymentsService {
 
     const planType = dto.planType.toUpperCase().trim();
     const plan = await this.planModel.findOne({ planType, isActive: true });
+    const billingPeriod = dto.billingPeriod ?? BillingPeriod.MONTHLY;
+    const useWallet = dto.useWallet !== false;
+
+    let amountDue = dto.amount;
+    let walletUsedPreview = 0;
+    if (plan) {
+      try {
+        const preview = await this.subscriptionsService.previewPlanChange(
+          companyId,
+          plan._id.toString(),
+          billingPeriod,
+          useWallet,
+        );
+        const previewData = preview?.data as
+          | { amountToPay?: number; walletUsed?: number }
+          | undefined;
+        if (typeof previewData?.amountToPay === 'number') {
+          amountDue = previewData.amountToPay;
+        }
+        if (typeof previewData?.walletUsed === 'number') {
+          walletUsedPreview = previewData.walletUsed;
+        }
+      } catch {
+        // keep client amount as fallback
+      }
+    }
+
+    if (amountDue < 1) {
+      throw new BadRequestException(
+        'No payment is due for this plan change. Use wallet checkout instead of manual proof.',
+      );
+    }
 
     const created = await this.paymentModel.create({
       planType,
       planId: plan?._id,
-      billingPeriod: dto.billingPeriod ?? BillingPeriod.MONTHLY,
-      amount: dto.amount,
+      billingPeriod,
+      amount: amountDue,
+      walletUsed: walletUsedPreview,
+      useWallet,
       transactionId: txnId.replace(/\s+/g, ''),
       notes: dto.notes?.trim(),
       paymentMethod: method,
@@ -230,14 +264,20 @@ export class PaymentsService {
         companyId,
         type: NotificationType.PAYMENT_VERIFICATION,
         title: 'Payment pending verification',
-        message: `${company?.name ?? 'A company'} submitted a ${method} payment of ₹${dto.amount} for ${planType}. Review required before subscription activates.`,
+        message: `${company?.name ?? 'A company'} submitted a ${method} payment of ₹${amountDue} for ${planType}${
+          useWallet && walletUsedPreview > 0
+            ? ` (wallet ${walletUsedPreview} applied)`
+            : ''
+        }. Review required before subscription activates.`,
         entityType: 'payment',
         entityId: created._id.toString(),
         meta: {
-          amount: dto.amount,
+          amount: amountDue,
           planType,
           status: PaymentVerificationStatus.PENDING,
           paymentMethod: method,
+          useWallet,
+          walletUsed: walletUsedPreview,
         },
       });
     } catch (err) {
@@ -305,6 +345,7 @@ export class PaymentsService {
           planId.toString(),
           payment._id.toString(),
           billingPeriod,
+          payment.useWallet !== false,
         );
       } catch (err) {
         this.logger.warn(
@@ -409,6 +450,8 @@ export class PaymentsService {
     const listPrice =
       billingPeriod === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
 
+    const useWallet = dto.useWallet !== false;
+
     let finalAmountInr = listPrice;
     let previewData: {
       amountToPay?: number;
@@ -418,19 +461,30 @@ export class PaymentsService {
       remainingDays?: number;
       currentPrice?: number;
       newPrice?: number;
+      useWallet?: boolean;
     } | null = null;
     try {
       const preview = await this.subscriptionsService.previewPlanChange(
         companyId,
         plan._id.toString(),
         billingPeriod,
+        useWallet,
       );
       previewData = preview?.data ?? null;
       if (typeof previewData?.amountToPay === 'number') {
         finalAmountInr = previewData.amountToPay;
       }
     } catch {
-      finalAmountInr = listPrice;
+      // Fallback: apply wallet against list price only when requested
+      if (useWallet && (company.walletBalance || 0) > 0) {
+        const applied = Math.min(company.walletBalance || 0, listPrice);
+        finalAmountInr = Math.max(
+          0,
+          Math.round((listPrice - applied) * 100) / 100,
+        );
+      } else {
+        finalAmountInr = listPrice;
+      }
     }
 
     // Downgrade / free / fully wallet-covered: apply plan change — never open Razorpay
@@ -443,6 +497,8 @@ export class PaymentsService {
         planId: plan._id,
         billingPeriod,
         amount: 0,
+        walletUsed: previewData?.walletUsed ?? 0,
+        useWallet,
         transactionId: `PLAN_${Date.now()}`,
         paymentMethod: PaymentMethodType.RAZORPAY,
         paymentGateway: isDowngrade ? 'DOWNGRADE' : 'WALLET',
@@ -452,7 +508,9 @@ export class PaymentsService {
           ? 'Plan downgrade confirmed (no Razorpay payment)'
           : listPrice <= 0
             ? 'Free plan change (no payment required)'
-            : 'Paid fully via wallet / proration credits (no Razorpay charge)',
+            : useWallet
+              ? 'Paid fully via wallet / proration credits (no Razorpay charge)'
+              : 'Plan change with no amount due',
       });
 
       try {
@@ -461,6 +519,7 @@ export class PaymentsService {
           plan._id.toString(),
           created._id.toString(),
           billingPeriod,
+          useWallet,
         );
       } catch (err) {
         this.logger.warn(
@@ -488,6 +547,7 @@ export class PaymentsService {
           currency: 'INR',
           skippedRazorpay: true,
           changeKind: isDowngrade ? 'downgrade' : 'upgrade',
+          useWallet,
           preview: previewData,
         },
       );
@@ -505,6 +565,7 @@ export class PaymentsService {
         planType: normalized,
         billingPeriod,
         userId,
+        useWallet: useWallet ? '1' : '0',
       },
     };
 
@@ -518,6 +579,8 @@ export class PaymentsService {
         planType: normalized,
         billingPeriod,
         changeKind: 'upgrade',
+        useWallet,
+        amountDueInr: finalAmountInr,
         preview: previewData,
       });
     } catch (error: unknown) {
@@ -541,6 +604,7 @@ export class PaymentsService {
       planType,
       billingPeriod,
     } = dto;
+    const useWallet = dto.useWallet !== false;
 
     // Idempotent: same Razorpay payment id must not create duplicate activations
     const existing = await this.paymentModel.findOne({
@@ -572,11 +636,32 @@ export class PaymentsService {
     const normalized = planType.toUpperCase().trim();
     const period = billingPeriod ?? BillingPeriod.MONTHLY;
     const plan = await this.planModel.findOne({ planType: normalized, isActive: true });
-    const amountInr = plan
-      ? period === BillingPeriod.YEARLY
-        ? plan.yearlyPriceInr
-        : plan.monthlyPriceInr
-      : 0;
+
+    let amountInr = 0;
+    let walletUsedPreview = 0;
+    if (plan) {
+      try {
+        const preview = await this.subscriptionsService.previewPlanChange(
+          companyId,
+          plan._id.toString(),
+          period,
+          useWallet,
+        );
+        const previewData = preview?.data as
+          | { amountToPay?: number; walletUsed?: number; newPrice?: number }
+          | undefined;
+        amountInr =
+          typeof previewData?.amountToPay === 'number'
+            ? previewData.amountToPay
+            : period === BillingPeriod.YEARLY
+              ? plan.yearlyPriceInr
+              : plan.monthlyPriceInr;
+        walletUsedPreview = previewData?.walletUsed ?? 0;
+      } catch {
+        amountInr =
+          period === BillingPeriod.YEARLY ? plan.yearlyPriceInr : plan.monthlyPriceInr;
+      }
+    }
 
     const created = await this.paymentModel.create({
       companyId,
@@ -586,13 +671,17 @@ export class PaymentsService {
       planId: plan?._id,
       billingPeriod: period,
       amount: amountInr || 0,
+      walletUsed: walletUsedPreview,
+      useWallet,
       transactionId: razorpay_payment_id,
       razorpayOrderId: razorpay_order_id,
       paymentMethod: PaymentMethodType.RAZORPAY,
       paymentGateway: 'RAZORPAY',
       verifiedBy: userId,
       verifiedAt: new Date(),
-      notes: 'Paid via Razorpay — auto-verified',
+      notes: useWallet
+        ? 'Paid via Razorpay (wallet applied where available) — auto-verified'
+        : 'Paid via Razorpay (wallet not used) — auto-verified',
     });
 
     if (plan) {
@@ -602,6 +691,7 @@ export class PaymentsService {
           plan._id.toString(),
           created._id.toString(),
           period,
+          useWallet,
         );
       } catch {
         // Fall through to activateCompanyPlan for companies without prior subscription row

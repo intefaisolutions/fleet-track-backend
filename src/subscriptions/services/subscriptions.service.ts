@@ -66,6 +66,7 @@ export class SubscriptionsService {
     newPlanId: string,
     paymentId?: string,
     billingPeriod: BillingPeriod = BillingPeriod.MONTHLY,
+    useWallet = true,
   ) {
     const session = await this.connection.startSession();
     session.startTransaction();
@@ -119,12 +120,12 @@ export class SubscriptionsService {
         );
       }
 
-      // 3. Purchase new plan using wallet — price depends on billing period
+      // 3. Purchase new plan using wallet (optional — user can pay full amount instead)
       let newPrice = planPriceForPeriod(newPlan, billingPeriod);
       let walletUsed = 0;
       let paymentRequired = newPrice;
 
-      if (company.walletBalance > 0) {
+      if (useWallet && company.walletBalance > 0) {
         if (company.walletBalance >= newPrice) {
           walletUsed = newPrice;
           paymentRequired = 0;
@@ -340,6 +341,7 @@ export class SubscriptionsService {
     companyId: string,
     newPlanId: string,
     billingPeriod: BillingPeriod = BillingPeriod.MONTHLY,
+    useWallet = true,
   ) {
     const company = await this.companyModel.findById(companyId);
     if (!company) throw new NotFoundException('Company not found');
@@ -360,12 +362,14 @@ export class SubscriptionsService {
     let walletUsed = 0;
     let paymentRequiredAmt = newPrice;
 
-    if (totalAvailable >= newPrice) {
-      walletUsed = newPrice;
-      paymentRequiredAmt = 0;
-    } else {
-      walletUsed = totalAvailable;
-      paymentRequiredAmt = this.roundToTwo(newPrice - walletUsed);
+    if (useWallet && totalAvailable > 0) {
+      if (totalAvailable >= newPrice) {
+        walletUsed = newPrice;
+        paymentRequiredAmt = 0;
+      } else {
+        walletUsed = totalAvailable;
+        paymentRequiredAmt = this.roundToTwo(newPrice - walletUsed);
+      }
     }
 
     const walletBalanceAfter = this.roundToTwo(totalAvailable - walletUsed);
@@ -384,6 +388,7 @@ export class SubscriptionsService {
       remainingDays: Math.ceil(remainingDays),
       creditGenerated: remainingCredit,
       walletBalanceBefore: walletBalanceBefore,
+      useWallet,
       walletUsed: walletUsed,
       walletBalanceAfter: walletBalanceAfter,
       amountToPay: paymentRequiredAmt,

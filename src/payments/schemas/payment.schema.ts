@@ -43,6 +43,10 @@ export class Payment {
   @Prop({ default: 0, min: 0 })
   walletUsed: number;
 
+  /** Whether wallet should be applied when this payment is verified / activated */
+  @Prop({ default: true })
+  useWallet: boolean;
+
   @Prop({ trim: true, default: 'INR' })
   currency: string;
 
