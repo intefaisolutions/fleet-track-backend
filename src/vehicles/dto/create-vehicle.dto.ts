@@ -90,8 +90,9 @@ export class CreateVehicleDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
   @IsMongoId()
-  assignedDriverId?: string;
+  assignedDriverId?: string | null;
 
   @ApiPropertyOptional({ description: 'Required when Super Admin creates for a company' })
   @IsOptional()
@@ -100,6 +101,7 @@ export class CreateVehicleDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @ValidateIf((_, v) => v != null && v !== '')
   @IsMongoId()
-  ownerId?: string;
+  ownerId?: string | null;
 }

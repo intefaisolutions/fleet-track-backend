@@ -55,6 +55,20 @@ export class VehiclesController {
     return this.vehiclesService.findAll(user.companyId, ownerId);
   }
 
+  @Get('usage')
+  @Roles(
+    ROLES.SUPER_ADMIN,
+    ROLES.COMPANY_ADMIN,
+    ROLES.FLEET_MANAGER,
+    ROLES.VEHICLE_OWNER,
+  )
+  getUsage(@CurrentUser() user: AuthenticatedUser) {
+    if (!user.companyId) {
+      throw new BadRequestException('companyId is required');
+    }
+    return this.vehiclesService.getCompanyUsage(user.companyId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.vehiclesService.findOne(id);

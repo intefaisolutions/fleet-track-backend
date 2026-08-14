@@ -109,6 +109,33 @@ export class VehiclesService {
     return [id, new Types.ObjectId(id)];
   }
 
+  /** Match legacy string companyId and ObjectId companyId. */
+  private companyIdFilter(companyId: string | Types.ObjectId) {
+    return { companyId: { $in: this.idVariants(String(companyId)) } };
+  }
+
+  /** Company-wide vehicle usage vs plan limit (shared across all owners). */
+  async getCompanyUsage(companyId: string) {
+    const company = await this.companyModel.findById(companyId).lean();
+    if (!company) {
+      throw new BadRequestException('Company not found');
+    }
+    const subscription = await this.subscriptionModel
+      .findOne(withNotDeleted({ companyId }))
+      .lean();
+    const vehicleLimit =
+      subscription?.vehicleLimit ?? company.vehicleLimit ?? 5;
+    const used = await this.vehicleModel.countDocuments(
+      withNotDeleted(this.companyIdFilter(companyId)),
+    );
+    return this.responseService.success('Vehicle usage fetched', {
+      used,
+      limit: vehicleLimit,
+      remaining: Math.max(0, vehicleLimit - used),
+      atLimit: used >= vehicleLimit,
+    });
+  }
+
   /**
    * Enforce 1 vehicle ↔ 1 driver: remove this driver from every other vehicle.
    */
@@ -156,46 +183,22 @@ export class VehiclesService {
     const subscription = await this.subscriptionModel
       .findOne(withNotDeleted({ companyId }))
       .lean();
-    const planLimit = subscription?.vehicleLimit ?? company.vehicleLimit ?? 5;
+    const planLimit =
+      subscription?.vehicleLimit ?? company.vehicleLimit ?? 5;
 
-    if (ownerId) {
-      const ownerCount = await this.vehicleModel.countDocuments(
-        withNotDeleted({ companyId, ownerId }),
+    // Company-wide pool: plan vehicleLimit is shared across all owners + admin
+    const companyFilter = this.companyIdFilter(companyId);
+    const vehicleCount = await this.vehicleModel.countDocuments(
+      withNotDeleted(companyFilter),
+    );
+    if (vehicleCount >= planLimit) {
+      await this.notifyVehicleLimit(companyId, vehicleCount, planLimit);
+      throw new BadRequestException(
+        `Company vehicle limit reached (${vehicleCount}/${planLimit}). Upgrade your plan to add more vehicles.`,
       );
-      if (ownerCount >= planLimit) {
-        await this.notifyVehicleLimit(companyId, ownerCount, planLimit);
-        throw new BadRequestException(
-          `Vehicle limit reached (${ownerCount}/${planLimit}). Upgrade your plan.`,
-        );
-      }
-      if (ownerCount >= planLimit - 1 && ownerCount < planLimit) {
-        await this.notifyVehicleLimit(companyId, ownerCount + 1, planLimit, true);
-      }
-    } else {
-      const vehicleCount = await this.vehicleModel.countDocuments(
-        withNotDeleted({ companyId }),
-      );
-      if (vehicleCount >= company.vehicleLimit) {
-        await this.notifyVehicleLimit(
-          companyId,
-          vehicleCount,
-          company.vehicleLimit,
-        );
-        throw new BadRequestException(
-          `Vehicle limit reached (${company.vehicleLimit}). Upgrade your plan.`,
-        );
-      }
-      if (
-        vehicleCount >= company.vehicleLimit - 1 &&
-        vehicleCount < company.vehicleLimit
-      ) {
-        await this.notifyVehicleLimit(
-          companyId,
-          vehicleCount + 1,
-          company.vehicleLimit,
-          true,
-        );
-      }
+    }
+    if (vehicleCount >= planLimit - 1 && vehicleCount < planLimit) {
+      await this.notifyVehicleLimit(companyId, vehicleCount + 1, planLimit, true);
     }
 
     const payload = this.mapCreateDto(dto);
@@ -207,8 +210,12 @@ export class VehiclesService {
 
     const doc = {
       ...payload,
-      companyId,
-      ...(ownerId ? { ownerId } : dto.ownerId ? { ownerId: dto.ownerId } : {}),
+      companyId: new Types.ObjectId(companyId),
+      ...(ownerId
+        ? { ownerId: new Types.ObjectId(ownerId) }
+        : dto.ownerId
+          ? { ownerId: new Types.ObjectId(dto.ownerId) }
+          : {}),
     };
 
     try {
@@ -302,6 +309,72 @@ export class VehiclesService {
     return this.responseService.success('Vehicle fetched successfully', item);
   }
 
+  private mapUpdateDto(dto: UpdateVehicleDto): Record<string, unknown> {
+    const update: Record<string, unknown> = {};
+
+    const registrationNumber = dto.registrationNumber ?? dto.vehicleNumber;
+    if (registrationNumber !== undefined) {
+      if (!registrationNumber.trim()) {
+        throw new BadRequestException('registrationNumber is required');
+      }
+      update.registrationNumber = normalizeRegistrationNumber(registrationNumber);
+    }
+
+    const modelName = dto.modelName ?? dto.model;
+    if (modelName !== undefined) {
+      if (!modelName.trim()) {
+        throw new BadRequestException('model or modelName is required');
+      }
+      update.modelName = modelName.trim();
+    }
+
+    if (dto.make !== undefined) {
+      update.make = dto.make.trim() || 'Fleet';
+    }
+    // API field is `type`; schema field is `vehicleType`
+    if (dto.type !== undefined) {
+      update.vehicleType = dto.type;
+    }
+    if (dto.vin !== undefined) {
+      update.vin = dto.vin.trim() || undefined;
+    }
+    if (dto.status !== undefined) {
+      update.status = dto.status;
+    }
+    if (dto.fuelType !== undefined) {
+      update.fuelType = dto.fuelType.trim() || undefined;
+    }
+    if (dto.currentOdometerKm !== undefined) {
+      update.currentOdometerKm = dto.currentOdometerKm;
+    }
+    if (dto.year !== undefined) {
+      update.year = dto.year;
+    }
+    if (dto.purchaseDate !== undefined) {
+      update.purchaseDate = dto.purchaseDate
+        ? new Date(dto.purchaseDate)
+        : null;
+    }
+    if (dto.purchaseCost !== undefined) {
+      update.purchaseCost = dto.purchaseCost;
+    }
+    if (dto.imageUrl !== undefined) {
+      update.imageUrl = dto.imageUrl.trim() || undefined;
+    }
+    if (dto.assignedDriverId !== undefined) {
+      update.assignedDriverId = dto.assignedDriverId
+        ? new Types.ObjectId(dto.assignedDriverId)
+        : null;
+    }
+    if (dto.ownerId !== undefined) {
+      update.ownerId = dto.ownerId
+        ? new Types.ObjectId(dto.ownerId)
+        : null;
+    }
+
+    return update;
+  }
+
   async update(id: string, dto: UpdateVehicleDto, ownerId?: string) {
     if (ownerId) {
       await this.assertOwnerVehicle(id, ownerId);
@@ -330,8 +403,14 @@ export class VehiclesService {
       await this.clearDriverFromOtherVehicles(nextDriverId, id);
     }
 
-    const item = await this.vehicleModel.findByIdAndUpdate(id, dto, {
+    const mapped = this.mapUpdateDto(dto);
+    if (Object.keys(mapped).length === 0) {
+      throw new BadRequestException('No valid fields to update');
+    }
+
+    const item = await this.vehicleModel.findByIdAndUpdate(id, mapped, {
       returnDocument: 'after',
+      runValidators: true,
     });
     if (!item) {
       throw new NotFoundException('Vehicle not found');

@@ -59,6 +59,7 @@ export class ReportsService {
 
     const [
       totalVehicles,
+      companyVehicleCount,
       totalOwners,
       totalDrivers,
       activeDrivers,
@@ -74,6 +75,7 @@ export class ReportsService {
       ownerMostExpensiveAgg,
     ] = await Promise.all([
       this.vehicleModel.countDocuments(ownerVehicleFilter),
+      this.vehicleModel.countDocuments(filter),
       ownerId
         ? this.userModel.countDocuments(
             withNotDeleted({ _id: ownerId, role: UserRole.VEHICLE_OWNER }),
@@ -301,6 +303,7 @@ export class ReportsService {
       totalExpenses,
       totalExpenseAmount: expensesThisMonth,
       myVehiclesLimit: subscription?.vehicleLimit ?? company?.vehicleLimit ?? 0,
+      companyVehicleCount: ownerId ? companyVehicleCount : totalVehicles,
       mostExpensiveVehicle,
       upcomingServices,
       recentOwnerExpenses: ownerRecentExpenseRows,

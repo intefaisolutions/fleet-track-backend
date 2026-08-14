@@ -62,6 +62,19 @@ import {
 /** Cooldown between license activation email resends */
 export const LICENSE_RESEND_COOLDOWN_SECONDS = 60;
 
+/**
+ * Legacy rows often store companyId as a plain string; newer rows use ObjectId.
+ * Match both so Super Admin company detail / counts stay accurate.
+ */
+function companyIdMatch(companyId: string | Types.ObjectId) {
+  const asString = String(companyId);
+  const values: Array<string | Types.ObjectId> = [asString];
+  if (Types.ObjectId.isValid(asString)) {
+    values.push(new Types.ObjectId(asString));
+  }
+  return { companyId: { $in: values } };
+}
+
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!local || !domain) return '***';
@@ -332,7 +345,13 @@ export class CompaniesService {
 
     const counts = await this.vehicleModel.aggregate<{ _id: unknown; count: number }>([
       { $match: withNotDeleted({}) },
-      { $group: { _id: '$companyId', count: { $sum: 1 } } },
+      {
+        $group: {
+          // Normalize string vs ObjectId companyId keys
+          _id: { $toString: '$companyId' },
+          count: { $sum: 1 },
+        },
+      },
     ]);
     const countByCompany = new Map(
       counts.map((row) => [String(row._id), row.count]),
@@ -355,6 +374,7 @@ export class CompaniesService {
     }
 
     const companyOid = item._id;
+    const byCompany = companyIdMatch(companyOid);
     const [
       licenseDetails,
       subscription,
@@ -365,10 +385,10 @@ export class CompaniesService {
     ] = await Promise.all([
       this.licensesService.getDetailsForCompany(id),
       this.subscriptionModel.findOne({ companyId: companyOid }).lean(),
-      this.vehicleModel.countDocuments(withNotDeleted({ companyId: companyOid })),
-      this.driverModel.countDocuments(withNotDeleted({ companyId: companyOid })),
+      this.vehicleModel.countDocuments(withNotDeleted(byCompany)),
+      this.driverModel.countDocuments(withNotDeleted(byCompany)),
       this.expenseModel.aggregate<{ count: number; total: number }>([
-        { $match: withNotDeleted({ companyId: companyOid }) },
+        { $match: withNotDeleted(byCompany) },
         {
           $group: {
             _id: null,
@@ -378,7 +398,10 @@ export class CompaniesService {
         },
       ]),
       this.userModel.countDocuments(
-        withNotDeleted({ companyId: companyOid, role: UserRole.VEHICLE_OWNER }),
+        withNotDeleted({
+          ...byCompany,
+          role: UserRole.VEHICLE_OWNER,
+        }),
       ),
     ]);
 
@@ -431,38 +454,38 @@ export class CompaniesService {
   async findDetail(id: string) {
     const base = await this.findOne(id);
     const company = base.data as Record<string, unknown> & { _id: Types.ObjectId };
-    const companyOid = company._id;
+    const byCompany = companyIdMatch(company._id);
 
     const [vehicles, drivers, expenses, payments, users] = await Promise.all([
       this.vehicleModel
-        .find(withNotDeleted({ companyId: companyOid }))
+        .find(withNotDeleted(byCompany))
         .sort({ createdAt: -1 })
         .limit(200)
         .populate('assignedDriverId', 'fullName phone')
         .populate('ownerId', 'fullName email')
         .lean(),
       this.driverModel
-        .find(withNotDeleted({ companyId: companyOid }))
+        .find(withNotDeleted(byCompany))
         .sort({ createdAt: -1 })
         .limit(200)
         .populate('userId', 'email fullName phone')
         .lean(),
       this.expenseModel
-        .find(withNotDeleted({ companyId: companyOid }))
+        .find(withNotDeleted(byCompany))
         .sort({ expenseDate: -1, createdAt: -1 })
         .limit(200)
         .populate('vehicleId', 'registrationNumber make modelName')
         .populate('recordedBy', 'fullName role')
         .lean(),
       this.paymentModel
-        .find({ companyId: companyOid })
+        .find(byCompany)
         .sort({ createdAt: -1 })
         .limit(50)
         .lean(),
       this.userModel
         .find(
           withNotDeleted({
-            companyId: companyOid,
+            ...byCompany,
             // Primary / sub COMPANY_ADMIN are not "fleet users" — Owners & Drivers only
             role: {
               $in: [UserRole.VEHICLE_OWNER, UserRole.DRIVER],
