@@ -8,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ExpenseCategory } from '../../common/enums';
 import { ResponseService } from '../../common/responses/response.service';
+import { StorageService } from '../../storage/services/storage.service';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { Expense, ExpenseDocument } from '../schemas/expense.schema';
 import { CreateExpenseDto } from '../dto/create-expense.dto';
@@ -26,7 +27,30 @@ export class ExpensesService {
     @InjectModel(Vehicle.name)
     private readonly vehicleModel: Model<VehicleDocument>,
     private readonly responseService: ResponseService,
+    private readonly storageService: StorageService,
   ) {}
+
+  /** DB keeps private S3 URL; API responses get a signed/viewable URL. */
+  private async presentExpense(item: unknown) {
+    if (!item || typeof item !== 'object') return item;
+    const plain =
+      typeof (item as { toObject?: () => Record<string, unknown> }).toObject ===
+      'function'
+        ? (item as { toObject: () => Record<string, unknown> }).toObject()
+        : { ...(item as Record<string, unknown>) };
+
+    const receiptUrl =
+      typeof plain.receiptUrl === 'string' ? plain.receiptUrl.trim() : '';
+    if (receiptUrl) {
+      plain.receiptUrl =
+        (await this.storageService.toViewUrl(receiptUrl)) || receiptUrl;
+    }
+    return plain;
+  }
+
+  private async presentExpenses(items: unknown[]) {
+    return Promise.all(items.map((item) => this.presentExpense(item)));
+  }
 
   /**
    * When a paid SERVICE expense is recorded (not a driver Service Alert),
@@ -182,7 +206,10 @@ export class ExpensesService {
         await this.syncVehicleLastServiceDate(dto.vehicleId, expenseDate);
       }
 
-      return this.responseService.created('Expense created successfully', created);
+      return this.responseService.created(
+        'Expense created successfully',
+        await this.presentExpense(created),
+      );
     } catch (err: unknown) {
       // Race: another sync already inserted the same clientRequestId
       if (
@@ -236,7 +263,10 @@ export class ExpensesService {
       .populate('recordedBy', 'fullName role')
       .populate('driverId', 'fullName phone')
       .sort({ expenseDate: -1 });
-    return this.responseService.success('Expenses fetched successfully', items);
+    return this.responseService.success(
+      'Expenses fetched successfully',
+      await this.presentExpenses(items),
+    );
   }
 
   /** Expenses on vehicles assigned to this driver (owner-added + driver-added). */
@@ -318,7 +348,10 @@ export class ExpensesService {
     if (!item) {
       throw new NotFoundException('Expense not found');
     }
-    return this.responseService.success('Expense fetched successfully', item);
+    return this.responseService.success(
+      'Expense fetched successfully',
+      await this.presentExpense(item),
+    );
   }
 
   async updateForDriver(
@@ -354,7 +387,10 @@ export class ExpensesService {
       .populate('vehicleId', 'registrationNumber make modelName')
       .populate('recordedBy', 'fullName role');
 
-    return this.responseService.success('Expense updated successfully', item);
+    return this.responseService.success(
+      'Expense updated successfully',
+      await this.presentExpense(item),
+    );
   }
 
   async update(id: string, dto: UpdateExpenseDto, ownerId?: string) {
@@ -380,7 +416,10 @@ export class ExpensesService {
       );
     }
 
-    return this.responseService.success('Expense updated successfully', item);
+    return this.responseService.success(
+      'Expense updated successfully',
+      await this.presentExpense(item),
+    );
   }
 
   async remove(id: string, ownerId?: string) {

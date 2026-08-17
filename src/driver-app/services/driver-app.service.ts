@@ -15,6 +15,7 @@ import { LoginDto } from '../../auth/dto/login.dto';
 import { ExpensesService } from '../../expenses/services/expenses.service';
 import { DriversService } from '../../drivers/services/drivers.service';
 import { NotificationsService } from '../../notifications/services/notifications.service';
+import { StorageService } from '../../storage/services/storage.service';
 import { Driver, DriverDocument } from '../../drivers/schemas/driver.schema';
 import { Vehicle, VehicleDocument } from '../../vehicles/schemas/vehicle.schema';
 import { User, UserDocument } from '../../users/schemas/user.schema';
@@ -145,8 +146,15 @@ export class DriverAppService {
     private readonly expensesService: ExpensesService,
     private readonly driversService: DriversService,
     private readonly responseService: ResponseService,
+    private readonly storageService: StorageService,
     @Optional() private readonly notificationsService?: NotificationsService,
   ) {}
+
+  private async resolveMediaUrl(url?: string | null): Promise<string> {
+    if (!url?.trim()) return '';
+    const viewUrl = await this.storageService.toViewUrl(url.trim());
+    return (viewUrl || url).trim();
+  }
 
   private async findDriverForUser(user: AuthenticatedUser): Promise<DriverDocument> {
     if (!user.companyId) {
@@ -261,7 +269,7 @@ export class DriverAppService {
     }
   }
 
-  private mapDriverUser(
+  private async mapDriverUser(
     user: {
       id: unknown;
       fullName?: string;
@@ -278,6 +286,7 @@ export class DriverAppService {
     const vehicleLabel = vehicle
       ? [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim()
       : '';
+    const profileImage = await this.resolveMediaUrl(user.profileImage);
     return {
       id: String(user.id),
       name: user.fullName ?? driver.fullName,
@@ -285,7 +294,7 @@ export class DriverAppService {
       email: user.email,
       phone: user.phone ?? driver.phone,
       address: user.address ?? '',
-      profileImage: user.profileImage ?? '',
+      profileImage,
       role: user.role ?? UserRole.DRIVER,
       initials: buildInitials(user.fullName ?? driver.fullName),
       designation: driver.licenseNumber
@@ -302,11 +311,17 @@ export class DriverAppService {
     };
   }
 
-  private mapExpenseItem(expense: Record<string, unknown>) {
+  private async mapExpenseItem(expense: Record<string, unknown>) {
     const vehicle = expense.vehicleId as Record<string, unknown> | undefined;
     const reg =
       (vehicle?.registrationNumber as string) ||
       (typeof expense.vehicleId === 'string' ? expense.vehicleId : '');
+
+    const storedReceipt =
+      typeof expense.receiptUrl === 'string' ? expense.receiptUrl.trim() : '';
+    const receiptUrl = storedReceipt
+      ? (await this.resolveMediaUrl(storedReceipt)) || storedReceipt
+      : '';
 
     return {
       id: String(expense._id),
@@ -315,7 +330,7 @@ export class DriverAppService {
       description: expense.description,
       expenseDate: expense.expenseDate,
       odometerKm: expense.odometerKm,
-      receiptUrl: expense.receiptUrl,
+      receiptUrl,
       categoryDetails: expense.categoryDetails,
       vehicle: reg,
       recordedBy: expense.recordedBy,
@@ -364,7 +379,7 @@ export class DriverAppService {
       } catch {
         // Login succeeds even when no vehicle is assigned yet.
       }
-      driverUser = this.mapDriverUser(data.user, driver, vehicle, owner);
+      driverUser = await this.mapDriverUser(data.user, driver, vehicle, owner);
     } catch {
       driverUser = {
         ...data.user,
@@ -394,7 +409,7 @@ export class DriverAppService {
       throw new NotFoundException('User not found');
     }
 
-    const profile = this.mapDriverUser(
+    const profile = await this.mapDriverUser(
       {
         id: dbUser._id,
         fullName: dbUser.fullName,
@@ -445,8 +460,10 @@ export class DriverAppService {
 
     const vehicleLabel = [vehicle.make, vehicle.modelName].filter(Boolean).join(' ').trim();
 
-    const recentExpenses = allExpenses.slice(0, 5).map((e) =>
-      this.mapExpenseItem(e as unknown as Record<string, unknown>),
+    const recentExpenses = await Promise.all(
+      allExpenses
+        .slice(0, 5)
+        .map((e) => this.mapExpenseItem(e as unknown as Record<string, unknown>)),
     );
 
     let lastServiceRaw: Date | null = vehicle.lastServiceDate
@@ -566,8 +583,10 @@ export class DriverAppService {
       filters,
     );
 
-    const mapped = filteredItems.map((e) =>
-      this.mapExpenseItem(e as unknown as Record<string, unknown>),
+    const mapped = await Promise.all(
+      filteredItems.map((e) =>
+        this.mapExpenseItem(e as unknown as Record<string, unknown>),
+      ),
     );
 
     return this.responseService.success('Expenses fetched successfully', {
@@ -785,7 +804,7 @@ export class DriverAppService {
 
     return this.responseService.success(
       'Profile fetched successfully',
-      this.mapDriverUser(
+      await this.mapDriverUser(
         {
           id: dbUser._id,
           fullName: dbUser.fullName,
@@ -869,7 +888,7 @@ export class DriverAppService {
     const data = result.data as unknown as Record<string, unknown>;
     return this.responseService.success(
       'Expense updated successfully',
-      this.mapExpenseItem(data),
+      await this.mapExpenseItem(data),
     );
   }
 

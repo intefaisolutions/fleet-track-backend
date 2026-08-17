@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { ExpensesModule } from '../expenses/expenses.module';
 import { DriversModule } from '../drivers/drivers.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { StorageModule } from '../storage/storage.module';
 import { Driver, DriverSchema } from '../drivers/schemas/driver.schema';
 import { Vehicle, VehicleSchema } from '../vehicles/schemas/vehicle.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
@@ -16,6 +17,7 @@ import { DriverAppService } from './services/driver-app.service';
     ExpensesModule,
     DriversModule,
     NotificationsModule,
+    StorageModule,
     MongooseModule.forFeature([
       { name: Driver.name, schema: DriverSchema },
       { name: Vehicle.name, schema: VehicleSchema },
